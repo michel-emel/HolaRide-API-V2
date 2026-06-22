@@ -4,23 +4,17 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 
 from app.config import settings
 from app.database import engine
 from app.logging_config import get_logger, setup_logging
-from app.rate_limit import limiter
 from app.routers import admin, auth, bookings, chat, drivers, location, payments, reviews, trips, users
 
 setup_logging()
 logger = get_logger("main")
 
 app = FastAPI(title="HolaRide API")
-
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
