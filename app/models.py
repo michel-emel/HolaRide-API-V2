@@ -11,9 +11,9 @@ exactly to what's in 001_schema.sql.
 import uuid
 
 from sqlalchemy import (
-    Column, String, Boolean, Integer, Numeric, Date, Time, ForeignKey, text
+    Column, String, Boolean, Integer, Numeric, Date, Time, ForeignKey, Text, text
 )
-from sqlalchemy.dialects.postgresql import UUID, TIMESTAMP
+from sqlalchemy.dialects.postgresql import UUID, TIMESTAMP, ARRAY
 
 from app.database import Base
 
@@ -74,6 +74,7 @@ class Vehicle(Base):
     total_seats = Column(Integer, nullable=False)
     vehicle_category_id = Column(UUID(as_uuid=True), ForeignKey("vehicle_categories.id"))
     verification_status = Column(String, nullable=False, server_default=text("'pending'"))
+    photo_urls = Column(ARRAY(Text), nullable=False, server_default=text("'{}'"))
     created_at = Column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
 

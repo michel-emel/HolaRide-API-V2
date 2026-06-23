@@ -10,3 +10,4 @@ upstash-redis==1.7.0
 upstash-ratelimit==1.1.0
 requests==2.34.2
 twilio==9.10.9
+supabase==2.31.0

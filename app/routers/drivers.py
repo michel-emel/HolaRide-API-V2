@@ -1,13 +1,13 @@
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.database import get_db
 from app.deps import get_current_user
-from app.services import payments_provider
+from app.services import payments_provider, storage
 from app.services.trip_formatting import to_trip_out
 
 router = APIRouter(prefix="/drivers/me", tags=["drivers"])
@@ -35,6 +35,40 @@ def register_vehicle(
 
     vehicle = models.Vehicle(driver_id=user.id, **payload.model_dump())
     db.add(vehicle)
+    db.commit()
+    db.refresh(vehicle)
+    return vehicle
+
+
+@router.post("/vehicle/{vehicle_id}/photos", response_model=schemas.VehicleOut)
+async def upload_vehicle_photos(
+    vehicle_id: UUID,
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """
+    Uploads one or more photos for a vehicle you own, to Supabase
+    Storage. Each call ADDS to the vehicle's existing photo_urls list —
+    it doesn't replace it. Useful both for admin verification (seeing
+    the actual car before approving it) and later showing passengers
+    what car to look for.
+    """
+    vehicle = (
+        db.query(models.Vehicle)
+        .filter(models.Vehicle.id == vehicle_id, models.Vehicle.driver_id == user.id)
+        .first()
+    )
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found for this driver")
+
+    new_urls = []
+    for file in files:
+        content = await file.read()
+        url = storage.upload_vehicle_photo(vehicle_id, file.filename, content, file.content_type)
+        new_urls.append(url)
+
+    vehicle.photo_urls = list(vehicle.photo_urls or []) + new_urls
     db.commit()
     db.refresh(vehicle)
     return vehicle

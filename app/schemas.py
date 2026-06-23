@@ -184,6 +184,7 @@ class VehicleOut(BaseModel):
     total_seats: int
     verification_status: str
     vehicle_category_id: Optional[UUID] = None
+    photo_urls: list[str] = []
 
 
 # ---- Admin: route pricing ----
