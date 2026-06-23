@@ -9,7 +9,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.database import engine
 from app.logging_config import get_logger, setup_logging
-from app.routers import admin, auth, bookings, chat, drivers, location, payments, reviews, trips, users
+from app.routers import admin, auth, bookings, chat, drivers, location, locations, payments, reviews, trips, users
 
 setup_logging()
 logger = get_logger("main")
@@ -77,6 +77,7 @@ app.include_router(admin.router)
 app.include_router(chat.router)
 app.include_router(location.router)
 app.include_router(reviews.router)
+app.include_router(locations.router)
 
 
 @app.get("/health")

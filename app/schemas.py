@@ -148,6 +148,13 @@ class LocationOut(BaseModel):
     name: str
 
 
+class LocationSearchResult(BaseModel):
+    id: UUID
+    name: str
+    city_id: UUID
+    city_name: str
+
+
 # ---- Admin: vehicle categories & approval ----
 
 class VehicleCategoryCreate(BaseModel):

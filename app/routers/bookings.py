@@ -9,6 +9,7 @@ from app import models, schemas
 from app.database import get_db
 from app.deps import get_current_user, require_driver
 from app.services import cancellations, notifications
+from app.services.chat_service import post_system_message
 from app.services.trip_formatting import to_trip_out
 
 router = APIRouter(prefix="/trips", tags=["bookings"])
@@ -81,6 +82,10 @@ def create_booking(
     notifications.notify_user(
         db, trip.driver_id, "booking_request", "New booking request",
         f"A passenger wants {payload.seats_booked} seat(s) on your trip. Review it in My Trips.",
+    )
+    post_system_message(
+        db, trip.id,
+        f"{passenger.first_name or 'A passenger'} requested {payload.seats_booked} seat(s).",
     )
 
     # The actual Mobile Money charge happens separately, and only AFTER
@@ -185,6 +190,7 @@ def accept_booking(
         db, booking.passenger_id, "booking_accepted", "Your booking was accepted",
         "The driver accepted your request — you can now pay for your seat.",
     )
+    post_system_message(db, trip.id, "Booking request accepted.")
     return {"booking_id": booking.id, "status": booking.status}
 
 
@@ -218,6 +224,7 @@ def reject_booking(
         db, booking.passenger_id, "booking_rejected", "Your booking request was declined",
         "The driver wasn't able to accept your request for this trip. Try another trip on the same route.",
     )
+    post_system_message(db, trip.id, "Booking request declined.")
     return {"booking_id": booking.id, "status": booking.status}
 
 

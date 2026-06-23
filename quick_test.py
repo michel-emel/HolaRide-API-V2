@@ -389,7 +389,86 @@ def main():
     )
     ok(f"booking status={no_show_result['status']}")
 
-    print("\n=== ALL STEPS PASSED (21/21) ===")
+    # ---- 22: booking acceptance workflow ----
+    step("22. SCENARIO E — driver must accept before passenger can pay")
+    trip_e = create_trip(driver_token, vehicle["id"], locations["Akwa"], locations["Mvan"], seats=2)
+    resp = requests.post(
+        f"{BASE_URL}/trips/{trip_e['id']}/bookings", headers=auth_headers(passenger_token),
+        json={"seats_booked": 1, "payment_type": "full"},
+    )
+    booking_e = parse_or_fail(resp, "request booking")
+    if booking_e["status"] != "pending_driver_acceptance":
+        fail(f"Expected pending_driver_acceptance, got {booking_e['status']}")
+    ok(f"booking requested, status={booking_e['status']}")
+
+    # Paying before acceptance must be blocked
+    early_pay = requests.post(
+        f"{BASE_URL}/bookings/{booking_e['id']}/initiate-payment", headers=auth_headers(passenger_token)
+    )
+    if early_pay.status_code == 200:
+        fail("initiate-payment succeeded BEFORE driver acceptance — the gate isn't working")
+    ok(f"payment correctly blocked before acceptance (status {early_pay.status_code})")
+
+    accept_result = parse_or_fail(
+        requests.patch(f"{BASE_URL}/bookings/{booking_e['id']}/accept", headers=auth_headers(driver_token)),
+        "accept booking",
+    )
+    if accept_result["status"] != "pending_payment":
+        fail(f"Expected pending_payment after accept, got {accept_result['status']}")
+    ok(f"driver accepted, status={accept_result['status']} — passenger can now pay")
+
+    # ---- 23: booking rejection ----
+    step("23. SCENARIO F — driver rejects a request, seat is restored")
+    trip_f = create_trip(driver_token, vehicle["id"], locations["Bonaberi"], locations["Bastos"], seats=2)
+    booking_f = parse_or_fail(
+        requests.post(f"{BASE_URL}/trips/{trip_f['id']}/bookings", headers=auth_headers(passenger_token),
+                      json={"seats_booked": 1, "payment_type": "full"}),
+        "request booking to be rejected",
+    )
+    reject_result = parse_or_fail(
+        requests.patch(f"{BASE_URL}/bookings/{booking_f['id']}/reject", headers=auth_headers(driver_token)),
+        "reject booking",
+    )
+    if reject_result["status"] != "rejected":
+        fail(f"Expected rejected, got {reject_result['status']}")
+    trip_f_after = parse_or_fail(requests.get(f"{BASE_URL}/trips/{trip_f['id']}"), "get trip after reject")
+    if trip_f_after["available_seats"] != 2:
+        fail(f"Expected seat restored to 2, got {trip_f_after['available_seats']}")
+    ok(f"booking rejected, seat correctly restored (available_seats={trip_f_after['available_seats']})")
+
+    # ---- 24: location search/autocomplete ----
+    step("24. Location search — by city name and by point name")
+    by_city = parse_or_fail(requests.get(f"{BASE_URL}/locations/search", params={"q": "Yaound"}), "search by city")
+    if not any(loc["name"] == "Mvan" for loc in by_city):
+        fail(f"Searching 'Yaound' didn't surface Mvan. Got: {[l['name'] for l in by_city]}")
+    ok(f"searching city name 'Yaound' returned {len(by_city)} point(s), including Mvan")
+
+    by_point = parse_or_fail(requests.get(f"{BASE_URL}/locations/search", params={"q": "Deido"}), "search by point")
+    if not by_point or by_point[0]["city_name"] != "Douala":
+        fail(f"Searching 'Deido' didn't return it correctly attached to Douala. Got: {by_point}")
+    ok(f"searching point name 'Deido' returned it attached to city '{by_point[0]['city_name']}'")
+
+    # ---- 25: chat system messages for the request/accept/reject workflow ----
+    step("25. Chat system messages — request, accept, reject all show up in the trip chat")
+    chat_messages = parse_or_fail(
+        requests.get(f"{BASE_URL}/trips/{trip_e['id']}/chat/messages", headers=auth_headers(driver_token)),
+        "read chat for trip_e (the accepted one)",
+    )
+    system_msgs = [m["content"] for m in chat_messages if m["message_type"] == "system"]
+    if not any("requested" in c for c in system_msgs) or not any("accepted" in c for c in system_msgs):
+        fail(f"Expected request + accept system messages in chat. Got: {system_msgs}")
+    ok(f"trip_e chat has the expected system messages: {system_msgs}")
+
+    chat_messages_f = parse_or_fail(
+        requests.get(f"{BASE_URL}/trips/{trip_f['id']}/chat/messages", headers=auth_headers(driver_token)),
+        "read chat for trip_f (the rejected one)",
+    )
+    system_msgs_f = [m["content"] for m in chat_messages_f if m["message_type"] == "system"]
+    if not any("declined" in c for c in system_msgs_f):
+        fail(f"Expected a decline system message in chat. Got: {system_msgs_f}")
+    ok(f"trip_f chat has the expected system message: {system_msgs_f}")
+
+    print("\n=== ALL STEPS PASSED (25/25) ===")
     print(f"Admin token:     {admin_token}")
     print(f"Driver token:    {driver_token}")
     print(f"Passenger token: {passenger_token}")
