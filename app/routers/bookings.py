@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,6 +9,7 @@ from app import models, schemas
 from app.database import get_db
 from app.deps import get_current_user, require_driver
 from app.services import cancellations, notifications
+from app.services.trip_formatting import to_trip_out
 
 router = APIRouter(prefix="/trips", tags=["bookings"])
 
@@ -254,3 +256,44 @@ def rebook(
         "new_booking_id": new_booking.id,
         "status": new_booking.status,
     }
+
+
+# Separate router, no shared prefix with the other two — sits at /me/bookings,
+# matching the "/me" pattern used elsewhere (GET /me, GET /drivers/me/...).
+me_router = APIRouter(tags=["bookings"])
+
+
+@me_router.get("/me/bookings", response_model=List[schemas.MyBookingOut])
+def my_bookings(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Lists every booking the current user has made as a passenger, most recent first, with trip details included."""
+    bookings = (
+        db.query(models.Booking)
+        .filter(models.Booking.passenger_id == user.id)
+        .order_by(models.Booking.created_at.desc())
+        .all()
+    )
+
+    results = []
+    for booking in bookings:
+        trip = db.query(models.Trip).filter(models.Trip.id == booking.trip_id).first()
+        trip_out = to_trip_out(db, trip)
+        results.append(
+            schemas.MyBookingOut(
+                id=booking.id,
+                trip_id=booking.trip_id,
+                seats_booked=booking.seats_booked,
+                price_total=float(booking.price_total),
+                payment_type=booking.payment_type,
+                amount_paid=float(booking.amount_paid),
+                outstanding_balance=float(booking.outstanding_balance),
+                status=booking.status,
+                created_at=booking.created_at,
+                departure_city=trip_out.departure_city,
+                departure_location=trip_out.departure_location,
+                destination_city=trip_out.destination_city,
+                destination_location=trip_out.destination_location,
+                departure_date=trip_out.departure_date,
+                departure_time=trip_out.departure_time,
+            )
+        )
+    return results

@@ -319,3 +319,36 @@ class ReviewSummary(BaseModel):
     average_stars: float
     total_reviews: int
     reviews: list[ReviewOut]
+
+
+# ---- My bookings (passenger booking history, with trip context) ----
+
+class MyBookingOut(BaseModel):
+    id: UUID
+    trip_id: UUID
+    seats_booked: int
+    price_total: float
+    payment_type: str
+    amount_paid: float
+    outstanding_balance: float
+    status: str
+    created_at: datetime
+    departure_city: str
+    departure_location: str
+    destination_city: str
+    destination_location: str
+    departure_date: date
+    departure_time: time
+
+
+# ---- Notifications ----
+
+class NotificationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    type: str
+    title: Optional[str] = None
+    body: Optional[str] = None
+    channel: Optional[str] = None
+    status: str
+    created_at: datetime

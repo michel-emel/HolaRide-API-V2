@@ -220,6 +220,27 @@ def main():
         fail(f"Expected seats_booked=2, got {booking['seats_booked']}")
     ok(f"booking id={booking['id']}, seats_booked={booking['seats_booked']}, status={booking['status']}")
 
+    # ---- 9b: the three newly-added "list mine" endpoints ----
+    step("9b. Checking the new GET /me/bookings, /drivers/me/trips, /me/notifications")
+    my_bookings = parse_or_fail(
+        requests.get(f"{BASE_URL}/me/bookings", headers=auth_headers(passenger_token)), "GET /me/bookings"
+    )
+    if not any(b["id"] == booking["id"] for b in my_bookings):
+        fail("The booking just created doesn't show up in GET /me/bookings")
+    ok(f"GET /me/bookings returned {len(my_bookings)} booking(s), including the one just made")
+
+    my_trips = parse_or_fail(
+        requests.get(f"{BASE_URL}/drivers/me/trips", headers=auth_headers(driver_token)), "GET /drivers/me/trips"
+    )
+    if not any(t["id"] == trip["id"] for t in my_trips):
+        fail("The trip just created doesn't show up in GET /drivers/me/trips")
+    ok(f"GET /drivers/me/trips returned {len(my_trips)} trip(s), including the one just made")
+
+    my_notifications = parse_or_fail(
+        requests.get(f"{BASE_URL}/me/notifications", headers=auth_headers(passenger_token)), "GET /me/notifications"
+    )
+    ok(f"GET /me/notifications returned {len(my_notifications)} notification(s) for the passenger")
+
     # ---- 10: search ----
     step("10. Searching for the trip by city")
     results = parse_or_fail(

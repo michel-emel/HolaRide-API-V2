@@ -1,3 +1,5 @@
+from typing import List
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -28,3 +30,15 @@ def update_me(
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.get("/me/notifications", response_model=List[schemas.NotificationOut])
+def my_notifications(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Lists the current user's notifications, most recent first (capped at 50)."""
+    return (
+        db.query(models.Notification)
+        .filter(models.Notification.user_id == user.id)
+        .order_by(models.Notification.created_at.desc())
+        .limit(50)
+        .all()
+    )

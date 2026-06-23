@@ -10,35 +10,9 @@ from app.database import get_db
 from app.deps import require_driver
 from app.services import cancellations, notifications, payments_provider
 from app.services.pricing import get_trip_price
+from app.services.trip_formatting import to_trip_out
 
 router = APIRouter(prefix="/trips", tags=["trips"])
-
-
-def _to_trip_out(db: Session, trip: models.Trip) -> schemas.TripOut:
-    """Internal helper. Assembles the city/location/category names for a trip's API response from their ids."""
-    dep_loc = db.query(models.Location).filter(models.Location.id == trip.departure_location_id).first()
-    dest_loc = db.query(models.Location).filter(models.Location.id == trip.destination_location_id).first()
-    dep_city = db.query(models.City).filter(models.City.id == dep_loc.city_id).first()
-    dest_city = db.query(models.City).filter(models.City.id == dest_loc.city_id).first()
-    vehicle = db.query(models.Vehicle).filter(models.Vehicle.id == trip.vehicle_id).first()
-    category = (
-        db.query(models.VehicleCategory)
-        .filter(models.VehicleCategory.id == vehicle.vehicle_category_id)
-        .first()
-    )
-    return schemas.TripOut(
-        id=trip.id,
-        departure_city=dep_city.name,
-        departure_location=dep_loc.name,
-        destination_city=dest_city.name,
-        destination_location=dest_loc.name,
-        departure_date=trip.departure_date,
-        departure_time=trip.departure_time,
-        price_per_seat=float(trip.price_per_seat),
-        available_seats=trip.available_seats,
-        vehicle_category=category.name,
-        status=trip.status,
-    )
 
 
 @router.post("", response_model=schemas.TripOut)
@@ -85,7 +59,7 @@ def create_trip(
     db.add(trip)
     db.commit()
     db.refresh(trip)
-    return _to_trip_out(db, trip)
+    return to_trip_out(db, trip)
 
 
 @router.get("/search", response_model=List[schemas.TripOut])
@@ -132,7 +106,7 @@ def search_trips(
         query = query.filter(models.Trip.departure_date == departure_date)
 
     query = query.order_by(models.Trip.departure_date, models.Trip.departure_time).limit(limit)
-    return [_to_trip_out(db, t) for t in query.all()]
+    return [to_trip_out(db, t) for t in query.all()]
 
 
 @router.get("/{trip_id}", response_model=schemas.TripOut)
@@ -141,7 +115,7 @@ def get_trip(trip_id: UUID, db: Session = Depends(get_db)):
     trip = db.query(models.Trip).filter(models.Trip.id == trip_id).first()
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
-    return _to_trip_out(db, trip)
+    return to_trip_out(db, trip)
 
 
 @router.patch("/{trip_id}/cancel")

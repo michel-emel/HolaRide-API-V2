@@ -8,6 +8,7 @@ from app import models, schemas
 from app.database import get_db
 from app.deps import get_current_user
 from app.services import payments_provider
+from app.services.trip_formatting import to_trip_out
 
 router = APIRouter(prefix="/drivers/me", tags=["drivers"])
 
@@ -43,6 +44,18 @@ def register_vehicle(
 def my_vehicles(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Lists every vehicle the current user has registered, with each one's approval status."""
     return db.query(models.Vehicle).filter(models.Vehicle.driver_id == user.id).all()
+
+
+@router.get("/trips", response_model=List[schemas.TripOut])
+def my_trips(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Lists every trip the current user has published as a driver, soonest first."""
+    trips = (
+        db.query(models.Trip)
+        .filter(models.Trip.driver_id == user.id)
+        .order_by(models.Trip.departure_date.desc(), models.Trip.departure_time.desc())
+        .all()
+    )
+    return [to_trip_out(db, t) for t in trips]
 
 
 @router.get("/payouts")
