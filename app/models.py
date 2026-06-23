@@ -126,7 +126,7 @@ class Booking(Base):
     payment_type = Column(String, nullable=False, server_default=text("'full'"))
     amount_paid = Column(Numeric, nullable=False, server_default=text("0"))
     outstanding_balance = Column(Numeric, nullable=False, server_default=text("0"))
-    status = Column(String, nullable=False, server_default=text("'pending_payment'"))
+    status = Column(String, nullable=False, server_default=text("'pending_driver_acceptance'"))
     created_at = Column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
 

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.config import settings
 from app.database import get_db
-from app.rate_limit import limiter
+from app.rate_limit import enforce_rate_limit, otp_request_limiter, otp_verify_limiter
 from app.security import (
     create_access_token,
     create_refresh_token,
@@ -17,25 +17,20 @@ from app.security import (
 )
 from app.services.sms import send_otp_sms
 
-# Strict in production (real abuse prevention). Generous in development,
-# since testing naturally fires several signups in a row from the same
-# machine/IP, and the limiter doesn't know those are different phone
-# numbers — it only sees "the same IP, too many requests."
-_OTP_REQUEST_LIMIT = "3/minute" if settings.environment == "production" else "30/minute"
-_OTP_VERIFY_LIMIT = "10/minute" if settings.environment == "production" else "60/minute"
-
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/otp/request")
-@limiter.limit(_OTP_REQUEST_LIMIT)  # prevents someone spamming your SMS bill or hammering one number
 def request_otp(payload: schemas.OTPRequest, request: Request, db: Session = Depends(get_db)):
     """
     Sends a 6-digit code to a phone number. Works the same whether the
     number is new (will become a signup once verified) or existing
     (a login). In dev mode, the code is also returned in the response
     body (dev_otp_code) for easy scripting — never happens in production.
+    Rate-limited per IP via Upstash Redis — see app/rate_limit.py.
     """
+    enforce_rate_limit(otp_request_limiter, request)
+
     code = generate_otp_code()
     otp_row = models.OTPCode(
         phone_number=payload.phone_number,
@@ -57,16 +52,18 @@ def request_otp(payload: schemas.OTPRequest, request: Request, db: Session = Dep
 
 
 @router.post("/otp/verify", response_model=schemas.TokenPair)
-@limiter.limit(_OTP_VERIFY_LIMIT)  # the attempts-counter inside this function already
-                              # blocks brute-forcing one phone's code; this caps
-                              # the request rate itself as a second layer
 def verify_otp(payload: schemas.OTPVerify, request: Request, db: Session = Depends(get_db)):
     """
     Verifies the code from /otp/request and returns access + refresh
     tokens. If this phone number has never been seen before, this is
     what actually creates the account — first_name/last_name are only
-    used on that first call and ignored on every login after.
+    used on that first call and ignored on every login after. The
+    attempts-counter on the OTP row already blocks brute-forcing one
+    phone's code; the IP-based rate limit below caps the request rate
+    itself as a second layer.
     """
+    enforce_rate_limit(otp_verify_limiter, request)
+
     otp_row = (
         db.query(models.OTPCode)
         .filter(models.OTPCode.phone_number == payload.phone_number)

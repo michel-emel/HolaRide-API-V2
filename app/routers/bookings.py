@@ -26,11 +26,11 @@ def create_booking(
     passenger: models.User = Depends(get_current_user),
 ):
     """
-    Books seats on a trip. payment_type "full" charges the whole price;
+    Requests seats on a trip. payment_type "full" charges the whole price;
     "partial_80" only requires 80% now, with the remaining 20% owed
     later via POST /bookings/{id}/pay-balance. The booking starts as
-    pending_payment — call POST /bookings/{id}/initiate-payment next
-    to actually charge it.
+    pending_driver_acceptance — the driver must call POST
+    /bookings/{id}/accept before the passenger is allowed to pay at all.
     """
     # Lock the trip row so two passengers can't both book the last seat
     # at the same instant (a classic race condition without this).
@@ -64,9 +64,12 @@ def create_booking(
         payment_type=payload.payment_type,
         amount_paid=0,  # becomes amount_due_now once the Mobile Money payment is confirmed
         outstanding_balance=outstanding,
-        status="pending_payment",
+        status="pending_driver_acceptance",
     )
 
+    # Seat is tentatively held the instant a request comes in, so nobody
+    # else can grab it while the driver is still deciding. Restored if
+    # the driver rejects — see reject_booking below.
     trip.available_seats -= payload.seats_booked
     if trip.available_seats == 0:
         trip.status = "full"
@@ -75,9 +78,14 @@ def create_booking(
     db.commit()
     db.refresh(booking)
 
-    # The actual Mobile Money charge happens separately — see
-    # POST /bookings/{id}/initiate-payment in app/routers/payments.py,
-    # which is what actually moves this booking from pending_payment to paid.
+    notifications.notify_user(
+        db, trip.driver_id, "booking_request", "New booking request",
+        f"A passenger wants {payload.seats_booked} seat(s) on your trip. Review it in My Trips.",
+    )
+
+    # The actual Mobile Money charge happens separately, and only AFTER
+    # the driver accepts — see POST /bookings/{id}/accept, and then
+    # POST /bookings/{id}/initiate-payment in app/routers/payments.py.
 
     return schemas.BookingOut(
         id=booking.id,
@@ -111,7 +119,7 @@ def cancel_booking(
     )
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
-    if booking.status not in ("pending_payment", "paid"):
+    if booking.status not in ("pending_driver_acceptance", "pending_payment", "paid"):
         raise HTTPException(status_code=400, detail=f"Booking can't be cancelled from status {booking.status}")
 
     trip = db.query(models.Trip).filter(models.Trip.id == booking.trip_id).first()
@@ -149,6 +157,68 @@ def cancel_booking(
         "booking_id": booking.id, "status": booking.status,
         "fee_charged": fee_charged, "refund_amount": refund_amount,
     }
+
+
+@actions_router.patch("/{booking_id}/accept")
+def accept_booking(
+    booking_id: UUID,
+    db: Session = Depends(get_db),
+    driver: models.User = Depends(require_driver()),
+):
+    """
+    Driver-only. Accepts a pending booking request, moving it to
+    pending_payment — only after this can the passenger actually pay.
+    """
+    booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    trip = db.query(models.Trip).filter(models.Trip.id == booking.trip_id).first()
+    if trip.driver_id != driver.id:
+        raise HTTPException(status_code=403, detail="Not your trip")
+    if booking.status != "pending_driver_acceptance":
+        raise HTTPException(status_code=400, detail=f"Booking is already {booking.status}")
+
+    booking.status = "pending_payment"
+    db.commit()
+
+    notifications.notify_user(
+        db, booking.passenger_id, "booking_accepted", "Your booking was accepted",
+        "The driver accepted your request — you can now pay for your seat.",
+    )
+    return {"booking_id": booking.id, "status": booking.status}
+
+
+@actions_router.patch("/{booking_id}/reject")
+def reject_booking(
+    booking_id: UUID,
+    db: Session = Depends(get_db),
+    driver: models.User = Depends(require_driver()),
+):
+    """
+    Driver-only. Declines a pending booking request. No payment was
+    ever taken at this stage, so there's nothing to refund — just
+    frees the seat back up and notifies the passenger.
+    """
+    booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    trip = db.query(models.Trip).filter(models.Trip.id == booking.trip_id).first()
+    if trip.driver_id != driver.id:
+        raise HTTPException(status_code=403, detail="Not your trip")
+    if booking.status != "pending_driver_acceptance":
+        raise HTTPException(status_code=400, detail=f"Booking is already {booking.status}")
+
+    booking.status = "rejected"
+    trip.available_seats += booking.seats_booked
+    if trip.status == "full":
+        trip.status = "published"
+    db.commit()
+
+    notifications.notify_user(
+        db, booking.passenger_id, "booking_rejected", "Your booking request was declined",
+        "The driver wasn't able to accept your request for this trip. Try another trip on the same route.",
+    )
+    return {"booking_id": booking.id, "status": booking.status}
 
 
 @actions_router.patch("/{booking_id}/mark-no-show")

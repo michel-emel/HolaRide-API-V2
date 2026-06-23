@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # Which provider actually sends the SMS: "twilio" or "termii"
     sms_provider: str = "termii"
 
+    # Upstash Redis — used for rate limiting on serverless platforms
+    # (e.g. Vercel) where in-memory counters don't work, since each
+    # request can hit a totally different function instance. If left
+    # blank (e.g. local development), rate limiting is simply skipped
+    # rather than erroring — fine for a single dev on their own machine.
+    upstash_redis_url: str = ""
+    upstash_redis_token: str = ""
+
     @model_validator(mode="after")
     def _enforce_production_safety(self) -> "Settings":
         """
