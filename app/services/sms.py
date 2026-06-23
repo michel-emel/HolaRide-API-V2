@@ -9,16 +9,22 @@ TERMII_BASE_URL = "https://api.ng.termii.com/api/sms/send"
 
 
 def send_otp_sms(phone_number: str, code: str) -> None:
+    """Sends an OTP code by SMS. Thin wrapper around send_sms() with the OTP-specific message text."""
+    send_sms(phone_number, f"Your HolaRide verification code is {code}")
+
+
+def send_sms(phone_number: str, message: str) -> None:
     """
-    Sends a real SMS once OTP_DEV_MODE is false, via whichever provider
-    SMS_PROVIDER points to ("termii" or "twilio"). In dev mode, just
-    logs the code so you don't need real credentials yet.
+    Sends ANY text message — OTP codes, booking request/accept/reject
+    alerts, anything. Once OTP_DEV_MODE is false, this is a REAL SMS
+    that costs real money via whichever provider SMS_PROVIDER points
+    to. In dev mode, it just logs instead — never sends anything real,
+    which matters a lot here since quick_test.py runs this exact path
+    repeatedly with fake phone numbers.
     """
     if settings.otp_dev_mode:
-        logger.info(f"[DEV OTP] {phone_number} -> {code}")
+        logger.info(f"[DEV SMS] {phone_number} -> {message}")
         return
-
-    message = f"Your HolaRide verification code is {code}"
 
     if settings.sms_provider == "termii":
         _send_via_termii(phone_number, message)
@@ -65,7 +71,7 @@ def _send_via_termii(phone_number: str, message: str) -> None:
         logger.error(f"[TERMII] send failed for {phone_number}: {data}")
         raise RuntimeError(f"Termii failed to send: {data.get('message', 'unknown error')}")
 
-    logger.info(f"[TERMII] OTP sent to {phone_number}, message_id={data.get('message_id')}")
+    logger.info(f"[TERMII] SMS sent to {phone_number}, message_id={data.get('message_id')}")
 
 
 def _send_via_twilio(phone_number: str, message: str) -> None:
@@ -85,4 +91,4 @@ def _send_via_twilio(phone_number: str, message: str) -> None:
 
     client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
     sent = client.messages.create(body=message, from_=settings.twilio_from_number, to=phone_number)
-    logger.info(f"[TWILIO] OTP sent to {phone_number}, message sid={sent.sid}")
+    logger.info(f"[TWILIO] SMS sent to {phone_number}, message sid={sent.sid}")

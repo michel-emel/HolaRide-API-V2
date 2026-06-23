@@ -82,6 +82,7 @@ def create_booking(
     notifications.notify_user(
         db, trip.driver_id, "booking_request", "New booking request",
         f"A passenger wants {payload.seats_booked} seat(s) on your trip. Review it in My Trips.",
+        channel="sms",
     )
     post_system_message(
         db, trip.id,
@@ -189,6 +190,7 @@ def accept_booking(
     notifications.notify_user(
         db, booking.passenger_id, "booking_accepted", "Your booking was accepted",
         "The driver accepted your request — you can now pay for your seat.",
+        channel="sms",
     )
     post_system_message(db, trip.id, "Booking request accepted.")
     return {"booking_id": booking.id, "status": booking.status}
@@ -223,6 +225,7 @@ def reject_booking(
     notifications.notify_user(
         db, booking.passenger_id, "booking_rejected", "Your booking request was declined",
         "The driver wasn't able to accept your request for this trip. Try another trip on the same route.",
+        channel="sms",
     )
     post_system_message(db, trip.id, "Booking request declined.")
     return {"booking_id": booking.id, "status": booking.status}
