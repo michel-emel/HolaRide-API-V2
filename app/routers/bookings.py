@@ -48,6 +48,29 @@ def create_booking(
     if payload.seats_booked > trip.available_seats:
         raise HTTPException(status_code=400, detail="Not enough seats available")
 
+    # Max 2 active bookings per passenger for the same route, same day.
+    # "Route" is the real routes.id (origin city + destination city) —
+    # not the specific trip — so this blocks booking two DIFFERENT
+    # trips on the same Yaoundé-Douala-on-the-25th, not just rebooking
+    # the exact same trip twice. Cancelled/rejected bookings don't
+    # count — those never actually became a real seat reservation.
+    existing_count = (
+        db.query(models.Booking)
+        .join(models.Trip, models.Booking.trip_id == models.Trip.id)
+        .filter(
+            models.Booking.passenger_id == passenger.id,
+            models.Trip.route_id == trip.route_id,
+            models.Trip.departure_date == trip.departure_date,
+            models.Booking.status.notin_(("cancelled", "rejected")),
+        )
+        .count()
+    )
+    if existing_count >= 2:
+        raise HTTPException(
+            status_code=400,
+            detail="You already have 2 bookings on this route today — that's the daily limit per route.",
+        )
+
     price_total = float(trip.price_per_seat) * payload.seats_booked
 
     if payload.payment_type == "partial_80":
