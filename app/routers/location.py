@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -57,7 +58,11 @@ def update_location(
 
 @router.get("/{trip_id}/location/driver", response_model=schemas.LiveLocationOut)
 def get_driver_location(trip_id: UUID, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    """Returns the driver's most recently pushed position. 404 if the driver hasn't shared location yet."""
+    """Returns the driver's most recently pushed position. 404 if the driver hasn't shared location yet.
+
+    Kept for backward compatibility — GET /{trip_id}/locations below is the
+    more complete version (every participant, not just the driver) and is
+    what the app actually uses now."""
     trip, _ = _require_participant(db, trip_id, user)
     loc = (
         db.query(models.LiveLocation)
@@ -67,6 +72,40 @@ def get_driver_location(trip_id: UUID, db: Session = Depends(get_db), user: mode
     if not loc:
         raise HTTPException(status_code=404, detail="Driver hasn't shared their location yet")
     return loc
+
+
+@router.get("/{trip_id}/locations", response_model=List[schemas.ParticipantLocationOut])
+def list_locations(trip_id: UUID, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """
+    Returns the most recently shared position for EVERY participant on
+    this trip who has shared one — the driver AND any paid passenger,
+    not just the driver. This is what makes location sharing genuinely
+    bidirectional: anyone on the trip (driver or passenger) can see
+    everyone else who's currently sharing, not only "driver pushes, one
+    passenger reads." The push side (update_location above) already
+    worked this way for any participant; this read endpoint was the
+    actual missing piece.
+    """
+    trip, _ = _require_participant(db, trip_id, user)
+    locs = db.query(models.LiveLocation).filter(models.LiveLocation.trip_id == trip.id).all()
+
+    results = []
+    for loc in locs:
+        participant = db.query(models.User).filter(models.User.id == loc.user_id).first()
+        if not participant:
+            continue
+        results.append(
+            schemas.ParticipantLocationOut(
+                user_id=loc.user_id,
+                role="driver" if loc.user_id == trip.driver_id else "passenger",
+                first_name=participant.first_name,
+                last_name=participant.last_name,
+                latitude=float(loc.latitude),
+                longitude=float(loc.longitude),
+                updated_at=loc.updated_at,
+            )
+        )
+    return results
 
 
 @router.post("/{trip_id}/checkin")
@@ -105,9 +144,6 @@ def trigger_sos(
     db.commit()
     db.refresh(alert)
 
-    # Stands in for a real alert pipeline (admin dashboard, emergency
-    # contact SMS, etc.) until one is built — at minimum this gets
-    # logged loudly so it's never silently missed during testing.
     logger.warning(f"[SOS ALERT] trip={trip.id} triggered_by={user.id} role={role} lat={payload.latitude} lon={payload.longitude}")
 
     if role == "passenger":
