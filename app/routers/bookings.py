@@ -105,6 +105,55 @@ def create_booking(
     )
 
 
+@router.get("/{trip_id}/bookings", response_model=List[schemas.DriverBookingOut])
+def list_trip_bookings(
+    trip_id: UUID,
+    db: Session = Depends(get_db),
+    driver: models.User = Depends(require_driver()),
+):
+    """
+    Driver-only. Lists every booking on one of your own trips, any
+    status — this is what the Requests/Bookings tabs in trip
+    management actually need to show anything real. 404s if the trip
+    doesn't exist, 403s if it isn't yours — same two-step pattern as
+    accept/reject/mark-no-show below, so a driver can't enumerate
+    another driver's bookings just by guessing trip ids.
+    """
+    trip = db.query(models.Trip).filter(models.Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    if trip.driver_id != driver.id:
+        raise HTTPException(status_code=403, detail="Not your trip")
+
+    bookings = (
+        db.query(models.Booking)
+        .filter(models.Booking.trip_id == trip_id)
+        .order_by(models.Booking.created_at.desc())
+        .all()
+    )
+
+    results = []
+    for b in bookings:
+        passenger = db.query(models.User).filter(models.User.id == b.passenger_id).first()
+        results.append(
+            schemas.DriverBookingOut(
+                id=b.id,
+                trip_id=b.trip_id,
+                seats_booked=b.seats_booked,
+                price_total=float(b.price_total),
+                payment_type=b.payment_type,
+                amount_paid=float(b.amount_paid),
+                outstanding_balance=float(b.outstanding_balance),
+                status=b.status,
+                created_at=b.created_at,
+                passenger_first_name=passenger.first_name if passenger else None,
+                passenger_last_name=passenger.last_name if passenger else None,
+                passenger_phone=passenger.phone_number if passenger else "",
+            )
+        )
+    return results
+
+
 @actions_router.patch("/{booking_id}/cancel")
 def cancel_booking(
     booking_id: UUID,

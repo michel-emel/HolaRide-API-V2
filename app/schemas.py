@@ -106,6 +106,13 @@ class TripOut(BaseModel):
     status: str
 
 
+class TripPricePreview(BaseModel):
+    """Response for GET /trips/price-preview — just the number a
+    driver would get if they published this exact route + vehicle
+    combination right now. Nothing is created or snapshotted."""
+    price_per_seat: float
+
+
 # ---- Bookings ----
 
 class BookingCreate(BaseModel):
@@ -122,6 +129,29 @@ class BookingOut(BaseModel):
     amount_paid: float
     outstanding_balance: float
     status: str
+
+
+class DriverBookingOut(BaseModel):
+    """
+    Same as BookingOut, plus enough passenger identity for a driver to
+    actually act on a request — accept/reject only takes a booking id,
+    but a human deciding whether to accept needs to know WHO is asking.
+    Only ever returned to the trip's own driver (see
+    GET /trips/{trip_id}/bookings), never to anyone else, so exposing
+    a phone number here is safe.
+    """
+    id: UUID
+    trip_id: UUID
+    seats_booked: int
+    price_total: float
+    payment_type: str
+    amount_paid: float
+    outstanding_balance: float
+    status: str
+    created_at: datetime
+    passenger_first_name: Optional[str] = None
+    passenger_last_name: Optional[str] = None
+    passenger_phone: str
 
 
 # ---- Admin: geography ----

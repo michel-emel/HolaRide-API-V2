@@ -109,6 +109,36 @@ def search_trips(
     return [to_trip_out(db, t) for t in query.all()]
 
 
+@router.get("/price-preview", response_model=schemas.TripPricePreview)
+def preview_trip_price(
+    vehicle_id: UUID,
+    departure_location_id: UUID,
+    destination_location_id: UUID,
+    db: Session = Depends(get_db),
+    driver: models.User = Depends(require_driver()),
+):
+    """
+    Lets a driver see the price-per-seat for a route before actually
+    publishing a trip, using the exact same pricing lookup create_trip
+    uses (get_trip_price) — so this number can never drift out of sync
+    with what the trip would actually be charged at. Same vehicle
+    ownership/approval checks as create_trip, since price depends on
+    the vehicle's assigned category. Nothing is created here.
+    """
+    vehicle = (
+        db.query(models.Vehicle)
+        .filter(models.Vehicle.id == vehicle_id, models.Vehicle.driver_id == driver.id)
+        .first()
+    )
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found for this driver")
+    if vehicle.verification_status != "approved":
+        raise HTTPException(status_code=400, detail="This vehicle isn't approved by admin yet")
+
+    _, price = get_trip_price(db, departure_location_id, destination_location_id, vehicle)
+    return schemas.TripPricePreview(price_per_seat=price)
+
+
 @router.get("/{trip_id}", response_model=schemas.TripOut)
 def get_trip(trip_id: UUID, db: Session = Depends(get_db)):
     """Public. Returns full details for a single trip."""
