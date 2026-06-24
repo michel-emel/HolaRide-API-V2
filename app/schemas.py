@@ -297,6 +297,8 @@ class MessageOut(BaseModel):
     content: Optional[str] = None
     message_type: str
     created_at: datetime
+    sender_first_name: Optional[str] = None
+    sender_last_name: Optional[str] = None
 
 
 # ---- Live location & SOS ----
