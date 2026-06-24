@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app import models
+from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user
 from app.logging_config import get_logger
@@ -170,6 +171,46 @@ def get_payment_status(
 
     db.refresh(payment)
     return {"payment_status": payment.status}
+
+
+@router.post("/bookings/{booking_id}/dev-force-paid")
+def dev_force_paid(
+    booking_id: UUID,
+    db: Session = Depends(get_db),
+    passenger: models.User = Depends(get_current_user),
+):
+    """
+    DEV-ONLY. Instantly marks a booking "paid" without touching PawaPay
+    at all — the in-app equivalent of quick_test.py's force_mark_paid(),
+    just reachable from the Flutter app for convenience while real
+    Mobile Money integration is still being worked out.
+
+    404s immediately, as if this route doesn't exist, unless
+    PAYMENT_DEV_MODE=true — and that flag is forcibly disabled in
+    production regardless of .env (see app/config.py). This must never
+    be reachable for a real user paying for a real trip; the 404 here
+    is the actual security boundary, not just a hidden button in the app.
+    """
+    if not settings.payment_dev_mode:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    booking = (
+        db.query(models.Booking)
+        .filter(models.Booking.id == booking_id, models.Booking.passenger_id == passenger.id)
+        .first()
+    )
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if booking.status not in ("pending_payment", "paid"):
+        raise HTTPException(status_code=400, detail=f"Booking is {booking.status} — nothing to settle")
+
+    booking.status = "paid"
+    booking.amount_paid = float(booking.price_total)
+    booking.outstanding_balance = 0
+    db.commit()
+
+    logger.warning(f"[DEV] booking {booking_id} force-marked paid via dev-force-paid endpoint")
+    return {"booking_id": booking.id, "status": booking.status}
 
 
 @router.post("/payments/webhook/pawapay")

@@ -18,6 +18,17 @@ class Settings(BaseSettings):
     otp_expire_minutes: int = 5
     otp_dev_mode: bool = True
 
+    # Lets a passenger skip real Mobile Money entirely and instantly
+    # mark a booking "paid" — mirrors quick_test.py's force_mark_paid(),
+    # just reachable from the app itself for convenience while real
+    # PawaPay integration is still being worked out. Defaults to False
+    # (unlike otp_dev_mode, which defaults True) because accidentally
+    # leaving a payment bypass on is a much bigger problem than an OTP
+    # convenience. See _enforce_production_safety below — this can
+    # never actually be active once ENVIRONMENT=production, regardless
+    # of what's in .env.
+    payment_dev_mode: bool = False
+
     # Comma-separated list of allowed origins for your Flutter web build
     # (if any) or any other browser-based client. Mobile apps calling
     # the API directly aren't affected by CORS at all.
@@ -66,14 +77,19 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _enforce_production_safety(self) -> "Settings":
         """
-        Safety net: even if someone forgets to flip OTP_DEV_MODE in
-        their production .env file, real OTPs always send for real
-        once ENVIRONMENT=production. Printing a real user's login
-        code to a server log in production would be a serious
-        security bug, not just a convenience setting.
+        Safety net: even if someone forgets to flip OTP_DEV_MODE or
+        PAYMENT_DEV_MODE in their production .env file, real OTPs
+        always send for real and real Mobile Money payment is always
+        required once ENVIRONMENT=production. Printing a real user's
+        login code to a server log, or letting a booking skip payment
+        entirely, would both be serious bugs in production — neither
+        is just a convenience setting.
         """
-        if self.environment == "production" and self.otp_dev_mode:
-            self.otp_dev_mode = False
+        if self.environment == "production":
+            if self.otp_dev_mode:
+                self.otp_dev_mode = False
+            if self.payment_dev_mode:
+                self.payment_dev_mode = False
         return self
 
 
