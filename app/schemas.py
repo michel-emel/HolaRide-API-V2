@@ -409,3 +409,55 @@ class NotificationOut(BaseModel):
     channel: Optional[str] = None
     status: str
     created_at: datetime
+
+# Add these two new schemas to app/schemas.py — they don't replace
+# anything, just add alongside your existing VehicleOut/RoutePricingOut
+# (which are still used elsewhere and shouldn't change).
+#
+# Both need: from typing import Optional, and the same UUID/datetime/
+# BaseModel/ConfigDict imports your schemas.py already has.
+
+
+class AdminVehicleOut(BaseModel):
+    """
+    Like VehicleOut, but with the owning driver's name/phone joined
+    in — used only by the admin panel's vehicle approval queue, where
+    knowing WHO owns the vehicle is essential and nothing else in the
+    API currently exposes it (there's no endpoint to list/look up
+    users by id at all).
+    """
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    driver_id: UUID
+    brand: str
+    model: str
+    year: Optional[int] = None
+    color: Optional[str] = None
+    plate_number: str
+    total_seats: int
+    vehicle_category_id: Optional[UUID] = None
+    verification_status: str
+    created_at: Optional[datetime] = None
+    driver_first_name: Optional[str] = None
+    driver_last_name: Optional[str] = None
+    driver_phone: Optional[str] = None
+
+
+class AdminRoutePricingOut(BaseModel):
+    """
+    Like RoutePricingOut, but with the route's two city names (and
+    IDs) plus the category name joined in — used only by the admin
+    panel. RoutePricingOut alone only has route_id and
+    vehicle_category_id, neither human-readable, and there's no
+    endpoint that resolves a route back to its two cities.
+    """
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    route_id: UUID
+    vehicle_category_id: UUID
+    price_per_seat: float
+    origin_city_id: UUID
+    destination_city_id: UUID
+    origin_city_name: Optional[str] = None
+    destination_city_name: Optional[str] = None
+    vehicle_category_name: Optional[str] = None

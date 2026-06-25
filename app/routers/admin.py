@@ -86,13 +86,40 @@ def list_vehicle_categories(db: Session = Depends(get_db), _=Depends(require_rol
 
 # ---- Vehicle approval ----
 
-@router.get("/vehicles/pending", response_model=List[schemas.VehicleOut])
+def _to_admin_vehicle_out(db: Session, vehicle: models.Vehicle) -> schemas.AdminVehicleOut:
+    """
+    Joins in the owning driver's name/phone. The base Vehicle model
+    only has driver_id — there's no endpoint anywhere that lists or
+    looks up a user by id, so without this an admin reviewing the
+    approval queue would have no way to know who they're approving.
+    """
+    driver = db.query(models.User).filter(models.User.id == vehicle.driver_id).first()
+    return schemas.AdminVehicleOut(
+        id=vehicle.id,
+        driver_id=vehicle.driver_id,
+        brand=vehicle.brand,
+        model=vehicle.model,
+        year=vehicle.year,
+        color=vehicle.color,
+        plate_number=vehicle.plate_number,
+        total_seats=vehicle.total_seats,
+        vehicle_category_id=vehicle.vehicle_category_id,
+        verification_status=vehicle.verification_status,
+        created_at=vehicle.created_at,
+        driver_first_name=driver.first_name if driver else None,
+        driver_last_name=driver.last_name if driver else None,
+        driver_phone=driver.phone_number if driver else None,
+    )
+
+
+@router.get("/vehicles/pending", response_model=List[schemas.AdminVehicleOut])
 def list_pending_vehicles(db: Session = Depends(get_db), _=Depends(require_role("admin"))):
     """Admin-only. The approval queue — every vehicle awaiting a yes/no decision."""
-    return db.query(models.Vehicle).filter(models.Vehicle.verification_status == "pending").all()
+    vehicles = db.query(models.Vehicle).filter(models.Vehicle.verification_status == "pending").all()
+    return [_to_admin_vehicle_out(db, v) for v in vehicles]
 
 
-@router.patch("/vehicles/{vehicle_id}", response_model=schemas.VehicleOut)
+@router.patch("/vehicles/{vehicle_id}", response_model=schemas.AdminVehicleOut)
 def approve_vehicle(
     vehicle_id: UUID,
     payload: schemas.VehicleApproval,
@@ -112,12 +139,36 @@ def approve_vehicle(
         vehicle.vehicle_category_id = payload.vehicle_category_id
     db.commit()
     db.refresh(vehicle)
-    return vehicle
+    return _to_admin_vehicle_out(db, vehicle)
 
 
 # ---- Route pricing ----
 
-@router.post("/route-pricing", response_model=schemas.RoutePricingOut)
+def _to_admin_route_pricing_out(db: Session, rp: models.RoutePricing, route: models.Route) -> schemas.AdminRoutePricingOut:
+    """
+    Joins in the route's two city names (and IDs) plus the category
+    name. RoutePricingOut on its own only has route_id and
+    vehicle_category_id — neither is human-readable, and there's no
+    endpoint that resolves a route back to its cities, so without this
+    an admin viewing this list would see nothing but opaque UUIDs.
+    """
+    origin = db.query(models.City).filter(models.City.id == route.origin_city_id).first()
+    destination = db.query(models.City).filter(models.City.id == route.destination_city_id).first()
+    category = db.query(models.VehicleCategory).filter(models.VehicleCategory.id == rp.vehicle_category_id).first()
+    return schemas.AdminRoutePricingOut(
+        id=rp.id,
+        route_id=rp.route_id,
+        vehicle_category_id=rp.vehicle_category_id,
+        price_per_seat=rp.price_per_seat,
+        origin_city_id=route.origin_city_id,
+        destination_city_id=route.destination_city_id,
+        origin_city_name=origin.name if origin else None,
+        destination_city_name=destination.name if destination else None,
+        vehicle_category_name=category.name if category else None,
+    )
+
+
+@router.post("/route-pricing", response_model=schemas.AdminRoutePricingOut)
 def set_route_pricing(
     payload: schemas.RoutePricingCreate, db: Session = Depends(get_db), _=Depends(require_role("admin"))
 ):
@@ -156,7 +207,7 @@ def set_route_pricing(
         existing.price_per_seat = payload.price_per_seat
         db.commit()
         db.refresh(existing)
-        return existing
+        return _to_admin_route_pricing_out(db, existing, route)
 
     rp = models.RoutePricing(
         route_id=route.id,
@@ -166,13 +217,20 @@ def set_route_pricing(
     db.add(rp)
     db.commit()
     db.refresh(rp)
-    return rp
+    return _to_admin_route_pricing_out(db, rp, route)
 
 
-@router.get("/route-pricing", response_model=List[schemas.RoutePricingOut])
+@router.get("/route-pricing", response_model=List[schemas.AdminRoutePricingOut])
 def list_route_pricing(db: Session = Depends(get_db), _=Depends(require_role("admin"))):
     """Admin-only. Lists every route + category price currently configured."""
-    return db.query(models.RoutePricing).all()
+    rows = db.query(models.RoutePricing).all()
+    out = []
+    for rp in rows:
+        route = db.query(models.Route).filter(models.Route.id == rp.route_id).first()
+        if not route:
+            continue
+        out.append(_to_admin_route_pricing_out(db, rp, route))
+    return out
 
 
 # ---- Cancellation policy tiers ----
