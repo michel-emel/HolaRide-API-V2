@@ -41,6 +41,23 @@ def create_trip(
     if payload.available_seats > vehicle.total_seats:
         raise HTTPException(status_code=400, detail="Available seats can't exceed the vehicle's total seats")
 
+    # Max 2 active trips per driver at once. "Active" means not yet
+    # completed or cancelled — a driver juggling more than 2 live
+    # trips at a time is exactly the scenario this caps.
+    active_count = (
+        db.query(models.Trip)
+        .filter(
+            models.Trip.driver_id == driver.id,
+            models.Trip.status.notin_(("completed", "cancelled")),
+        )
+        .count()
+    )
+    if active_count >= 2:
+        raise HTTPException(
+            status_code=400,
+            detail="You already have 2 active trips — complete or cancel one before publishing another.",
+        )
+
     # Driver never sets a category or a price — both are derived here.
     route, price = get_trip_price(db, payload.departure_location_id, payload.destination_location_id, vehicle)
 
