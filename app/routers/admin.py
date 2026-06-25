@@ -327,6 +327,17 @@ def _cascade_delete_trip(db: Session, trip: models.Trip):
 
     Does NOT commit — callers commit once, after this returns, so a
     failure partway through doesn't leave a half-deleted trip behind.
+
+    Every step here uses an immediate bulk `.delete(synchronize_session=False)`
+    rather than `db.delete(obj)` — deliberately. This codebase's models
+    have plain `ForeignKey()` columns but no declared `relationship()`
+    between them, so SQLAlchemy's unit-of-work has no way to infer the
+    correct delete order between mapped objects on its own; `db.delete()`
+    defers to flush time and let the ORM pick an order, which isn't
+    guaranteed to respect FK dependencies here. Bulk deletes run
+    immediately, in exactly the order written below, with no ambiguity.
+    If this function is ever extended, new steps should follow the same
+    pattern rather than mixing in `db.delete(obj)`.
     """
     bookings = db.query(models.Booking).filter(models.Booking.trip_id == trip.id).all()
     booking_ids = [b.id for b in bookings]
@@ -349,7 +360,7 @@ def _cascade_delete_trip(db: Session, trip: models.Trip):
     chat = db.query(models.TripChat).filter(models.TripChat.trip_id == trip.id).first()
     if chat:
         db.query(models.Message).filter(models.Message.chat_id == chat.id).delete(synchronize_session=False)
-        db.delete(chat)
+        db.query(models.TripChat).filter(models.TripChat.id == chat.id).delete(synchronize_session=False)
 
     db.query(models.LiveLocation).filter(models.LiveLocation.trip_id == trip.id).delete(synchronize_session=False)
     db.query(models.SOSAlert).filter(models.SOSAlert.trip_id == trip.id).delete(synchronize_session=False)
@@ -362,7 +373,7 @@ def _cascade_delete_trip(db: Session, trip: models.Trip):
         {models.DriverReliabilityLog.related_trip_id: None}, synchronize_session=False
     )
 
-    db.delete(trip)
+    db.query(models.Trip).filter(models.Trip.id == trip.id).delete(synchronize_session=False)
 
 
 @router.get("/trips", response_model=List[schemas.AdminTripOut])
@@ -422,7 +433,7 @@ def _cascade_delete_user(db: Session, user: models.User):
             synchronize_session=False
         )
         db.query(models.Payment).filter(models.Payment.booking_id == booking.id).delete(synchronize_session=False)
-        db.delete(booking)
+        db.query(models.Booking).filter(models.Booking.id == booking.id).delete(synchronize_session=False)
 
     db.query(models.Vehicle).filter(models.Vehicle.driver_id == user.id).delete(synchronize_session=False)
     db.query(models.DriverProfile).filter(models.DriverProfile.user_id == user.id).delete(synchronize_session=False)
@@ -442,7 +453,7 @@ def _cascade_delete_user(db: Session, user: models.User):
     )
     db.query(models.Payout).filter(models.Payout.driver_id == user.id).delete(synchronize_session=False)
 
-    db.delete(user)
+    db.query(models.User).filter(models.User.id == user.id).delete(synchronize_session=False)
 
 
 @router.get("/users", response_model=List[schemas.AdminUserOut])
