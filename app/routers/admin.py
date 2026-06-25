@@ -289,6 +289,12 @@ def _to_admin_trip_out(db: Session, trip: models.Trip) -> schemas.AdminTripOut:
     destination = (
         db.query(models.City).filter(models.City.id == route.destination_city_id).first() if route else None
     )
+    origin_location = (
+        db.query(models.Location).filter(models.Location.id == trip.departure_location_id).first()
+    )
+    destination_location = (
+        db.query(models.Location).filter(models.Location.id == trip.destination_location_id).first()
+    )
     booking_count = db.query(models.Booking).filter(models.Booking.trip_id == trip.id).count()
     return schemas.AdminTripOut(
         id=trip.id,
@@ -297,7 +303,9 @@ def _to_admin_trip_out(db: Session, trip: models.Trip) -> schemas.AdminTripOut:
         driver_last_name=driver.last_name if driver else None,
         driver_phone=driver.phone_number if driver else None,
         origin_city_name=origin.name if origin else None,
+        origin_location_name=origin_location.name if origin_location else None,
         destination_city_name=destination.name if destination else None,
+        destination_location_name=destination_location.name if destination_location else None,
         departure_date=trip.departure_date,
         departure_time=trip.departure_time,
         available_seats=trip.available_seats,

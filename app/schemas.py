@@ -555,3 +555,100 @@ class AdminTripOut(BaseModel):
     price_per_seat: float
     status: str
     booking_count: int = 0
+
+# Add these to app/schemas.py — they don't replace anything, just add
+# alongside your existing schemas (which are still used elsewhere and
+# shouldn't change).
+#
+# Needs: from datetime import date, time, datetime
+# and the same Optional/List/UUID/BaseModel/ConfigDict imports your
+# schemas.py already has.
+
+
+class AdminVehicleOut(BaseModel):
+    """
+    Like VehicleOut, but with the owning driver's name/phone joined
+    in — used only by the admin panel's vehicle approval queue, where
+    knowing WHO owns the vehicle is essential and nothing else in the
+    API currently exposes it (there's no endpoint to list/look up
+    users by id at all).
+    """
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    driver_id: UUID
+    brand: str
+    model: str
+    year: Optional[int] = None
+    color: Optional[str] = None
+    plate_number: str
+    total_seats: int
+    vehicle_category_id: Optional[UUID] = None
+    verification_status: str
+    created_at: Optional[datetime] = None
+    driver_first_name: Optional[str] = None
+    driver_last_name: Optional[str] = None
+    driver_phone: Optional[str] = None
+
+
+class AdminRoutePricingOut(BaseModel):
+    """
+    Like RoutePricingOut, but with the route's two city names (and
+    IDs) plus the category name joined in — used only by the admin
+    panel. RoutePricingOut alone only has route_id and
+    vehicle_category_id, neither human-readable, and there's no
+    endpoint that resolves a route back to its two cities.
+    """
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    route_id: UUID
+    vehicle_category_id: UUID
+    price_per_seat: float
+    origin_city_id: UUID
+    destination_city_id: UUID
+    origin_city_name: Optional[str] = None
+    destination_city_name: Optional[str] = None
+    vehicle_category_name: Optional[str] = None
+
+
+class AdminUserOut(BaseModel):
+    """Full account record for the admin user-management list — same fields as the users table itself."""
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    phone_number: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    role: str
+    phone_verified: bool
+    is_active: bool
+    created_at: Optional[datetime] = None
+
+
+class UserStatusUpdate(BaseModel):
+    """Body for PATCH /admin/users/{id}/status — suspend (false) or reactivate (true)."""
+    is_active: bool
+
+
+class AdminTripOut(BaseModel):
+    """
+    Admin-wide trip listing — every trip across every driver, with
+    driver name/phone and resolved city + pickup-point names joined
+    in, plus a booking count so admin can see at a glance whether
+    deleting a given trip would also be erasing real passenger
+    bookings.
+    """
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    driver_id: UUID
+    driver_first_name: Optional[str] = None
+    driver_last_name: Optional[str] = None
+    driver_phone: Optional[str] = None
+    origin_city_name: Optional[str] = None
+    origin_location_name: Optional[str] = None
+    destination_city_name: Optional[str] = None
+    destination_location_name: Optional[str] = None
+    departure_date: date
+    departure_time: time
+    available_seats: int
+    price_per_seat: float
+    status: str
+    booking_count: int = 0
