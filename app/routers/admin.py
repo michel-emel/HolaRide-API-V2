@@ -278,3 +278,233 @@ def update_cancellation_tier(
     db.commit()
     db.refresh(tier)
     return tier
+
+
+# ---- Trip management (admin) ----
+
+def _to_admin_trip_out(db: Session, trip: models.Trip) -> schemas.AdminTripOut:
+    driver = db.query(models.User).filter(models.User.id == trip.driver_id).first()
+    route = db.query(models.Route).filter(models.Route.id == trip.route_id).first()
+    origin = db.query(models.City).filter(models.City.id == route.origin_city_id).first() if route else None
+    destination = (
+        db.query(models.City).filter(models.City.id == route.destination_city_id).first() if route else None
+    )
+    booking_count = db.query(models.Booking).filter(models.Booking.trip_id == trip.id).count()
+    return schemas.AdminTripOut(
+        id=trip.id,
+        driver_id=trip.driver_id,
+        driver_first_name=driver.first_name if driver else None,
+        driver_last_name=driver.last_name if driver else None,
+        driver_phone=driver.phone_number if driver else None,
+        origin_city_name=origin.name if origin else None,
+        destination_city_name=destination.name if destination else None,
+        departure_date=trip.departure_date,
+        departure_time=trip.departure_time,
+        available_seats=trip.available_seats,
+        price_per_seat=trip.price_per_seat,
+        status=trip.status,
+        booking_count=booking_count,
+    )
+
+
+def _cascade_delete_trip(db: Session, trip: models.Trip):
+    """
+    Permanently deletes a trip and everything that references it —
+    bookings, payments, cancellations, live locations, SOS alerts,
+    reviews, its chat and every message in it, and any payouts already
+    issued for it. This is IRREVERSIBLE and erases payment/payout
+    history along with the trip — there's no soft-delete, no undo, and
+    no refund issued automatically; if passengers already paid, that
+    payment record is simply gone.
+
+    Reports that mention this trip have their trip_id cleared instead
+    of being deleted outright — a report is a moderation record about
+    a PERSON's behavior, and erasing it just because the trip listing
+    is gone would destroy safety history for no real reason. Same idea
+    for driver reliability log entries: the score impact already
+    happened and stays on the driver's record; only the link back to
+    this specific trip is cleared.
+
+    Does NOT commit — callers commit once, after this returns, so a
+    failure partway through doesn't leave a half-deleted trip behind.
+    """
+    bookings = db.query(models.Booking).filter(models.Booking.trip_id == trip.id).all()
+    booking_ids = [b.id for b in bookings]
+    if booking_ids:
+        # A cancellation can point at ANOTHER booking via rebooked_to —
+        # clear that link first wherever it points at a booking we're
+        # about to delete, regardless of which trip that cancellation
+        # itself belongs to.
+        db.query(models.Cancellation).filter(models.Cancellation.rebooked_to.in_(booking_ids)).update(
+            {models.Cancellation.rebooked_to: None}, synchronize_session=False
+        )
+        db.query(models.Cancellation).filter(models.Cancellation.booking_id.in_(booking_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(models.Payment).filter(models.Payment.booking_id.in_(booking_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(models.Booking).filter(models.Booking.trip_id == trip.id).delete(synchronize_session=False)
+
+    chat = db.query(models.TripChat).filter(models.TripChat.trip_id == trip.id).first()
+    if chat:
+        db.query(models.Message).filter(models.Message.chat_id == chat.id).delete(synchronize_session=False)
+        db.delete(chat)
+
+    db.query(models.LiveLocation).filter(models.LiveLocation.trip_id == trip.id).delete(synchronize_session=False)
+    db.query(models.SOSAlert).filter(models.SOSAlert.trip_id == trip.id).delete(synchronize_session=False)
+    db.query(models.Review).filter(models.Review.trip_id == trip.id).delete(synchronize_session=False)
+    db.query(models.Payout).filter(models.Payout.trip_id == trip.id).delete(synchronize_session=False)
+    db.query(models.Report).filter(models.Report.trip_id == trip.id).update(
+        {models.Report.trip_id: None}, synchronize_session=False
+    )
+    db.query(models.DriverReliabilityLog).filter(models.DriverReliabilityLog.related_trip_id == trip.id).update(
+        {models.DriverReliabilityLog.related_trip_id: None}, synchronize_session=False
+    )
+
+    db.delete(trip)
+
+
+@router.get("/trips", response_model=List[schemas.AdminTripOut])
+def list_all_trips(db: Session = Depends(get_db), _=Depends(require_role("admin"))):
+    """Admin-only. Every trip across every driver — for finding one to delete/moderate, not a search UI."""
+    trips = db.query(models.Trip).order_by(models.Trip.departure_date.desc()).all()
+    return [_to_admin_trip_out(db, t) for t in trips]
+
+
+@router.delete("/trips/{trip_id}")
+def delete_trip(trip_id: UUID, db: Session = Depends(get_db), _=Depends(require_role("admin"))):
+    """
+    Admin-only. PERMANENTLY deletes a trip — see `_cascade_delete_trip`
+    above for exactly what that takes with it. Irreversible.
+    """
+    trip = db.query(models.Trip).filter(models.Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    _cascade_delete_trip(db, trip)
+    db.commit()
+    return {"status": "deleted", "trip_id": trip_id}
+
+
+# ---- User management (admin) ----
+
+def _cascade_delete_user(db: Session, user: models.User):
+    """
+    Permanently deletes a user account and everything connected to it
+    — irreversible, same caveats as `_cascade_delete_trip`. If this
+    account is a driver, every trip they ever published is cascade-
+    deleted the same way (payment/payout records included). If this
+    account has bookings as a PASSENGER on other people's trips, those
+    bookings are deleted too — but first the seats they took are
+    credited back to that other trip's available_seats, the same way
+    a normal cancellation would, so deleting one passenger doesn't
+    leave some unrelated driver's trip permanently short on seats.
+
+    Messages this user sent, reviews they're part of (either side),
+    and reports they're part of (either side) are deleted outright
+    rather than anonymized — a half-erased review or report with a
+    "Deleted User" placeholder isn't meaningful to anyone, and the
+    request was for a true delete, not a soft one.
+    """
+    own_trips = db.query(models.Trip).filter(models.Trip.driver_id == user.id).all()
+    for trip in own_trips:
+        _cascade_delete_trip(db, trip)
+
+    passenger_bookings = db.query(models.Booking).filter(models.Booking.passenger_id == user.id).all()
+    for booking in passenger_bookings:
+        other_trip = db.query(models.Trip).filter(models.Trip.id == booking.trip_id).first()
+        if other_trip and booking.status not in ("cancelled", "rejected"):
+            other_trip.available_seats += booking.seats_booked
+        db.query(models.Cancellation).filter(models.Cancellation.rebooked_to == booking.id).update(
+            {models.Cancellation.rebooked_to: None}, synchronize_session=False
+        )
+        db.query(models.Cancellation).filter(models.Cancellation.booking_id == booking.id).delete(
+            synchronize_session=False
+        )
+        db.query(models.Payment).filter(models.Payment.booking_id == booking.id).delete(synchronize_session=False)
+        db.delete(booking)
+
+    db.query(models.Vehicle).filter(models.Vehicle.driver_id == user.id).delete(synchronize_session=False)
+    db.query(models.DriverProfile).filter(models.DriverProfile.user_id == user.id).delete(synchronize_session=False)
+    db.query(models.Message).filter(models.Message.sender_id == user.id).delete(synchronize_session=False)
+    db.query(models.LiveLocation).filter(models.LiveLocation.user_id == user.id).delete(synchronize_session=False)
+    db.query(models.SOSAlert).filter(models.SOSAlert.triggered_by == user.id).delete(synchronize_session=False)
+    db.query(models.Review).filter(
+        (models.Review.reviewer_id == user.id) | (models.Review.reviewee_id == user.id)
+    ).delete(synchronize_session=False)
+    db.query(models.Report).filter(
+        (models.Report.reporter_id == user.id) | (models.Report.reported_user_id == user.id)
+    ).delete(synchronize_session=False)
+    db.query(models.Notification).filter(models.Notification.user_id == user.id).delete(synchronize_session=False)
+    db.query(models.DeviceToken).filter(models.DeviceToken.user_id == user.id).delete(synchronize_session=False)
+    db.query(models.DriverReliabilityLog).filter(models.DriverReliabilityLog.driver_id == user.id).delete(
+        synchronize_session=False
+    )
+    db.query(models.Payout).filter(models.Payout.driver_id == user.id).delete(synchronize_session=False)
+
+    db.delete(user)
+
+
+@router.get("/users", response_model=List[schemas.AdminUserOut])
+def list_users(
+    search: Optional[str] = None, db: Session = Depends(get_db), _=Depends(require_role("admin"))
+):
+    """Admin-only. Every account, optionally filtered by phone/first/last name via ?search=."""
+    q = db.query(models.User)
+    if search:
+        like = f"%{search}%"
+        q = q.filter(
+            models.User.phone_number.ilike(like)
+            | models.User.first_name.ilike(like)
+            | models.User.last_name.ilike(like)
+        )
+    return q.order_by(models.User.created_at.desc()).all()
+
+
+@router.patch("/users/{user_id}/status", response_model=schemas.AdminUserOut)
+def set_user_status(
+    user_id: UUID,
+    payload: schemas.UserStatusUpdate,
+    db: Session = Depends(get_db),
+    _=Depends(require_role("admin")),
+):
+    """Admin-only. Suspends (is_active=false) or reactivates (is_active=true) an account."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.is_active = payload.is_active
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(require_role("admin")),
+):
+    """
+    Admin-only. PERMANENTLY deletes a user account — see
+    `_cascade_delete_user` above for exactly what that takes with it.
+    Irreversible.
+
+    NOTE: assumes require_role("admin") returns the authenticated
+    User, by analogy with require_driver()'s established pattern
+    elsewhere in this codebase (every other admin endpoint in this
+    file discards it as `_` since it never needed the value before
+    now) — verify this works as expected; if require_role's actual
+    signature differs, this is the one line that needs adjusting.
+
+    An admin can't delete their own account through this endpoint —
+    do that with direct SQL if it's ever genuinely needed, so a
+    panel mis-click can't lock everyone out of admin entirely.
+    """
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="You can't delete your own account from here")
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    _cascade_delete_user(db, user)
+    db.commit()
+    return {"status": "deleted", "user_id": user_id}
