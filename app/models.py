@@ -287,3 +287,20 @@ class OTPCode(Base):
     expires_at = Column(TIMESTAMP(timezone=True), nullable=False)
     attempts = Column(Integer, nullable=False, server_default=text("0"))
     created_at = Column(TIMESTAMP(timezone=True), server_default=text("now()"))
+
+
+class HiddenChat(Base):
+    """
+    Created by alembic migration 0007_hidden_chats.py — tracks which
+    trip-chats a user has removed from their OWN chat list, like
+    WhatsApp's "Delete Chat". Doesn't affect anyone else's copy of the
+    conversation, and doesn't touch the messages table at all; it's
+    purely a per-user visibility flag, cleared automatically the next
+    time a new message is sent in that chat (see send_message in
+    app/routers/chat.py).
+    """
+    __tablename__ = "hidden_chats"
+    id = uuid_pk()
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    trip_id = Column(UUID(as_uuid=True), ForeignKey("trips.id"), nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=text("now()"))
