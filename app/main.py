@@ -19,6 +19,13 @@ app = FastAPI(title="HolaRide API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.cors_allowed_origins.split(",")],
+    # Covers `flutter run -d chrome`, which picks a different random
+    # port on every launch — without this, CORS_ALLOWED_ORIGINS would
+    # need updating every single time just to test the web build
+    # locally. Safe in production too: this only ever matches
+    # "localhost" itself, which a real attacker's browser can't fake
+    # as their own origin — it doesn't open access to any other domain.
+    allow_origin_regex=r"http://localhost:\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -91,5 +98,4 @@ def health():
     except Exception as exc:
         logger.error(f"Health check DB connection failed: {exc}")
         db_status = "unreachable"
-
     return {"status": "ok" if db_status == "connected" else "degraded", "database": db_status}
