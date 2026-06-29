@@ -15,8 +15,18 @@ def to_trip_out(db: Session, trip: models.Trip) -> schemas.TripOut:
         .filter(models.VehicleCategory.id == vehicle.vehicle_category_id)
         .first()
     )
+
+    # The driver's rating, so a passenger can see it before booking
+    # without a separate request — joined in the same spirit as the
+    # city/category names above.
+    driver_reviews = db.query(models.Review).filter(models.Review.reviewee_id == trip.driver_id).all()
+    driver_rating_average = (
+        round(sum(r.stars for r in driver_reviews) / len(driver_reviews), 2) if driver_reviews else None
+    )
+
     return schemas.TripOut(
         id=trip.id,
+        driver_id=trip.driver_id,
         departure_city=dep_city.name,
         departure_location=dep_loc.name,
         destination_city=dest_city.name,
@@ -27,4 +37,6 @@ def to_trip_out(db: Session, trip: models.Trip) -> schemas.TripOut:
         available_seats=trip.available_seats,
         vehicle_category=category.name,
         status=trip.status,
+        driver_rating_average=driver_rating_average,
+        driver_rating_count=len(driver_reviews),
     )

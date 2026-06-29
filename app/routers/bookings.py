@@ -158,6 +158,14 @@ def list_trip_bookings(
     results = []
     for b in bookings:
         passenger = db.query(models.User).filter(models.User.id == b.passenger_id).first()
+        passenger_reviews = (
+            db.query(models.Review).filter(models.Review.reviewee_id == b.passenger_id).all()
+        )
+        rating_average = (
+            round(sum(r.stars for r in passenger_reviews) / len(passenger_reviews), 2)
+            if passenger_reviews
+            else None
+        )
         results.append(
             schemas.DriverBookingOut(
                 id=b.id,
@@ -172,6 +180,8 @@ def list_trip_bookings(
                 passenger_first_name=passenger.first_name if passenger else None,
                 passenger_last_name=passenger.last_name if passenger else None,
                 passenger_phone=passenger.phone_number if passenger else "",
+                passenger_rating_average=rating_average,
+                passenger_rating_count=len(passenger_reviews),
             )
         )
     return results
@@ -449,3 +459,4 @@ def my_bookings(db: Session = Depends(get_db), user: models.User = Depends(get_c
             )
         )
     return results
+
