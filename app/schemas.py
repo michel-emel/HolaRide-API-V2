@@ -320,6 +320,23 @@ class LiveLocationOut(BaseModel):
     updated_at: datetime
 
 
+class ParticipantLocationOut(BaseModel):
+    """
+    Response for GET /trips/{trip_id}/locations — one entry per
+    participant (driver or any paid passenger) who's currently
+    sharing their position. This is what makes location sharing
+    genuinely bidirectional: every participant can see every other
+    participant, not just "driver shares, one passenger reads."
+    """
+    user_id: UUID
+    role: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    latitude: float
+    longitude: float
+    updated_at: datetime
+
+
 class SOSCreate(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
