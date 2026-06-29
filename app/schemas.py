@@ -95,6 +95,8 @@ class TripCreate(BaseModel):
 class TripOut(BaseModel):
     id: UUID
     driver_id: UUID
+    driver_first_name: Optional[str] = None
+    driver_last_name: Optional[str] = None
     departure_city: str
     departure_location: str
     destination_city: str
@@ -104,6 +106,8 @@ class TripOut(BaseModel):
     price_per_seat: float
     available_seats: int
     vehicle_category: str
+    vehicle_brand: Optional[str] = None
+    vehicle_model: Optional[str] = None
     status: str
     driver_rating_average: Optional[float] = None
     driver_rating_count: int = 0

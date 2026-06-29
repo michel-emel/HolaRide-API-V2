@@ -23,10 +23,13 @@ def to_trip_out(db: Session, trip: models.Trip) -> schemas.TripOut:
     driver_rating_average = (
         round(sum(r.stars for r in driver_reviews) / len(driver_reviews), 2) if driver_reviews else None
     )
+    driver = db.query(models.User).filter(models.User.id == trip.driver_id).first()
 
     return schemas.TripOut(
         id=trip.id,
         driver_id=trip.driver_id,
+        driver_first_name=driver.first_name if driver else None,
+        driver_last_name=driver.last_name if driver else None,
         departure_city=dep_city.name,
         departure_location=dep_loc.name,
         destination_city=dest_city.name,
@@ -36,6 +39,8 @@ def to_trip_out(db: Session, trip: models.Trip) -> schemas.TripOut:
         price_per_seat=float(trip.price_per_seat),
         available_seats=trip.available_seats,
         vehicle_category=category.name,
+        vehicle_brand=vehicle.brand if vehicle else None,
+        vehicle_model=vehicle.model if vehicle else None,
         status=trip.status,
         driver_rating_average=driver_rating_average,
         driver_rating_count=len(driver_reviews),
