@@ -1,94 +1,110 @@
-import requests
-
-from app.config import settings
-from app.logging_config import get_logger
-
-logger = get_logger("sms")
-
-TERMII_BASE_URL = "https://api.ng.termii.com/api/sms/send"
+from pydantic import model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def send_otp_sms(phone_number: str, code: str) -> None:
-    """Sends an OTP code by SMS. Thin wrapper around send_sms() with the OTP-specific message text."""
-    send_sms(phone_number, f"Your HolaRide verification code is {code}")
-
-
-def send_sms(phone_number: str, message: str) -> None:
+class Settings(BaseSettings):
     """
-    Sends ANY text message — OTP codes, booking request/accept/reject
-    alerts, anything. Once OTP_DEV_MODE is false, this is a REAL SMS
-    that costs real money via whichever provider SMS_PROVIDER points
-    to. In dev mode, it just logs instead — never sends anything real,
-    which matters a lot here since quick_test.py runs this exact path
-    repeatedly with fake phone numbers.
+    All values come from your .env file. See .env.example for what's needed.
     """
-    if settings.otp_dev_mode:
-        logger.info(f"[DEV SMS] {phone_number} -> {message}")
-        return
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    if settings.sms_provider == "termii":
-        _send_via_termii(phone_number, message)
-    elif settings.sms_provider == "twilio":
-        _send_via_twilio(phone_number, message)
-    else:
-        raise RuntimeError(f"Unknown SMS_PROVIDER: {settings.sms_provider!r}")
+    environment: str = "development"  # "development" | "production"
+
+    database_url: str
+    jwt_secret: str
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60 * 24       # 1 day
+    refresh_token_expire_minutes: int = 60 * 24 * 30  # 30 days
+    otp_expire_minutes: int = 5
+    otp_dev_mode: bool = True
+
+    # Lets a passenger skip real Mobile Money entirely and instantly
+    # mark a booking "paid" — mirrors quick_test.py's force_mark_paid(),
+    # just reachable from the app itself for convenience while real
+    # PawaPay integration is still being worked out. Defaults to False
+    # (unlike otp_dev_mode, which defaults True) because accidentally
+    # leaving a payment bypass on is a much bigger problem than an OTP
+    # convenience. See _enforce_production_safety below — this can
+    # never actually be active once ENVIRONMENT=production, regardless
+    # of what's in .env.
+    payment_dev_mode: bool = False
+
+    # Comma-separated list of allowed origins for your Flutter web build
+    # (if any) or any other browser-based client. Mobile apps calling
+    # the API directly aren't affected by CORS at all.
+    cors_allowed_origins: str = "http://localhost:3000"
+
+    # PawaPay sandbox. NEVER commit a real token — this only ever comes
+    # from your .env file. https://api.sandbox.pawapay.io for sandbox,
+    # https://api.pawapay.io for production.
+    pawapay_api_token: str = ""
+    pawapay_base_url: str = "https://api.sandbox.pawapay.io"
+
+    # Twilio — used for real OTP delivery once OTP_DEV_MODE is false.
+    # NEVER commit real values — .env file only.
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from_number: str = ""  # the Twilio number you were given/bought, e.g. +15017122661
+
+    # Termii — alternative SMS provider, often better Cameroon coverage.
+    # NEVER commit real values — .env file only.
+    termii_api_key: str = ""
+    termii_sender_id: str = ""  # your registered sender ID from the Termii dashboard
+    # "dnd" is correct for OTP/transactional per Termii's own docs, but it
+    # must be activated on your account first (contact Termii support).
+    # If you haven't activated it yet, set this to "generic" temporarily —
+    # Termii's docs warn generic risks delivery failures/blocked sender ID
+    # for OTPs, so switch back to "dnd" as soon as it's enabled.
+    termii_channel: str = "dnd"
+
+    # Infobip — alternative SMS provider, confirmed working for MTN
+    # Cameroon via the dashboard's own test-send tool.
+    # NEVER commit real values — .env file only.
+    infobip_api_key: str = ""  # the part after "App " in your dashboard's Authorization header
+    # Account-specific subdomain shown in your dashboard's code snippet,
+    # e.g. "2yr9vp.api.infobip.com" — no "https://" prefix, that's added
+    # automatically. Every Infobip account gets a different one of these.
+    infobip_base_url: str = ""
+    # On a trial account, Infobip silently substitutes ANY sender name
+    # to "ServiceSMS" regardless of what's sent — confirmed directly
+    # from your own dashboard test. Once you register a real sender ID
+    # with Infobip for production, change this to that instead.
+    infobip_sender_id: str = "ServiceSMS"
+
+    # Which provider actually sends the SMS: "twilio", "termii", or "infobip"
+    sms_provider: str = "termii"
+
+    # Upstash Redis — used for rate limiting on serverless platforms
+    # (e.g. Vercel) where in-memory counters don't work, since each
+    # request can hit a totally different function instance. If left
+    # blank (e.g. local development), rate limiting is simply skipped
+    # rather than erroring — fine for a single dev on their own machine.
+    upstash_redis_url: str = ""
+    upstash_redis_token: str = ""
+
+    # Supabase — used for vehicle/document photo storage.
+    # NEVER commit real values — .env file only.
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_vehicle_photos_bucket: str = "vehicle-photos"
+
+    @model_validator(mode="after")
+    def _enforce_production_safety(self) -> "Settings":
+        """
+        Safety net: even if someone forgets to flip OTP_DEV_MODE or
+        PAYMENT_DEV_MODE in their production .env file, real OTPs
+        always send for real and real Mobile Money payment is always
+        required once ENVIRONMENT=production. Printing a real user's
+        login code to a server log, or letting a booking skip payment
+        entirely, would both be serious bugs in production — neither
+        is just a convenience setting.
+        """
+        if self.environment == "production":
+            if self.otp_dev_mode:
+                self.otp_dev_mode = False
+            if self.payment_dev_mode:
+                self.payment_dev_mode = False
+        return self
 
 
-def _send_via_termii(phone_number: str, message: str) -> None:
-    """
-    Termii's docs recommend the 'dnd' channel for OTP/transactional
-    messages (the 'generic' channel is for promotional messages and
-    can fail or get your sender ID blocked if used for OTPs). 'dnd'
-    needs to be activated on your account first via Termii support —
-    see TERMII_CHANNEL in .env if you need a temporary fallback.
-    """
-    if not (settings.termii_api_key and settings.termii_sender_id):
-        raise RuntimeError(
-            "OTP_DEV_MODE is false and SMS_PROVIDER=termii, but Termii isn't "
-            "fully configured. Set TERMII_API_KEY and TERMII_SENDER_ID in .env."
-        )
-
-    # Termii expects numbers WITHOUT the leading '+', e.g. 237691234567
-    to_number = phone_number.lstrip("+")
-
-    resp = requests.post(
-        TERMII_BASE_URL,
-        headers={"Content-Type": "application/json"},
-        json={
-            "api_key": settings.termii_api_key,
-            "to": to_number,
-            "from": settings.termii_sender_id,
-            "sms": message,
-            "type": "plain",
-            "channel": settings.termii_channel,
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-
-    if data.get("code") != "ok":
-        logger.error(f"[TERMII] send failed for {phone_number}: {data}")
-        raise RuntimeError(f"Termii failed to send: {data.get('message', 'unknown error')}")
-
-    logger.info(f"[TERMII] SMS sent to {phone_number}, message_id={data.get('message_id')}")
-
-
-def _send_via_twilio(phone_number: str, message: str) -> None:
-    """
-    Twilio TRIAL ACCOUNT NOTE: trial accounts can only send to phone
-    numbers you've manually verified in the Twilio console first
-    (console.twilio.com -> Phone Numbers -> Verified Caller IDs).
-    """
-    from twilio.rest import Client  # imported here so it's never required unless actually used
-
-    if not (settings.twilio_account_sid and settings.twilio_auth_token and settings.twilio_from_number):
-        raise RuntimeError(
-            "OTP_DEV_MODE is false and SMS_PROVIDER=twilio, but Twilio isn't "
-            "fully configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, "
-            "and TWILIO_FROM_NUMBER in .env."
-        )
-
-    client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
-    sent = client.messages.create(body=message, from_=settings.twilio_from_number, to=phone_number)
-    logger.info(f"[TWILIO] SMS sent to {phone_number}, message sid={sent.sid}")
+settings = Settings()

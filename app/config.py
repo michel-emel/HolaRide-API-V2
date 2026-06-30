@@ -57,7 +57,21 @@ class Settings(BaseSettings):
     # for OTPs, so switch back to "dnd" as soon as it's enabled.
     termii_channel: str = "dnd"
 
-    # Which provider actually sends the SMS: "twilio" or "termii"
+    # Infobip — alternative SMS provider, confirmed working for MTN
+    # Cameroon via the dashboard's own test-send tool.
+    # NEVER commit real values — .env file only.
+    infobip_api_key: str = ""  # the part after "App " in your dashboard's Authorization header
+    # Account-specific subdomain shown in your dashboard's code snippet,
+    # e.g. "2yr9vp.api.infobip.com" — no "https://" prefix, that's added
+    # automatically. Every Infobip account gets a different one of these.
+    infobip_base_url: str = ""
+    # On a trial account, Infobip silently substitutes ANY sender name
+    # to "ServiceSMS" regardless of what's sent — confirmed directly
+    # from your own dashboard test. Once you register a real sender ID
+    # with Infobip for production, change this to that instead.
+    infobip_sender_id: str = "ServiceSMS"
+
+    # Which provider actually sends the SMS: "twilio", "termii", or "infobip"
     sms_provider: str = "termii"
 
     # Upstash Redis — used for rate limiting on serverless platforms
