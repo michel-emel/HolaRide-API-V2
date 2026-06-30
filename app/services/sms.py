@@ -7,7 +7,7 @@ logger = get_logger("sms")
 
 def send_otp_sms(phone_number: str, code: str) -> None:
     """Sends an OTP code by SMS. Thin wrapper around send_sms() with the OTP-specific message text."""
-    send_sms(phone_number, f"Hello, your HolaRide verification code is {code}")
+    send_sms(phone_number, f"Hello User, your HolaRide verification code is {code}")
 
 
 def send_sms(phone_number: str, message: str) -> None:
