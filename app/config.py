@@ -40,25 +40,8 @@ class Settings(BaseSettings):
     pawapay_api_token: str = ""
     pawapay_base_url: str = "https://api.sandbox.pawapay.io"
 
-    # Twilio — used for real OTP delivery once OTP_DEV_MODE is false.
-    # NEVER commit real values — .env file only.
-    twilio_account_sid: str = ""
-    twilio_auth_token: str = ""
-    twilio_from_number: str = ""  # the Twilio number you were given/bought, e.g. +15017122661
-
-    # Termii — alternative SMS provider, often better Cameroon coverage.
-    # NEVER commit real values — .env file only.
-    termii_api_key: str = ""
-    termii_sender_id: str = ""  # your registered sender ID from the Termii dashboard
-    # "dnd" is correct for OTP/transactional per Termii's own docs, but it
-    # must be activated on your account first (contact Termii support).
-    # If you haven't activated it yet, set this to "generic" temporarily —
-    # Termii's docs warn generic risks delivery failures/blocked sender ID
-    # for OTPs, so switch back to "dnd" as soon as it's enabled.
-    termii_channel: str = "dnd"
-
-    # Infobip — alternative SMS provider, confirmed working for MTN
-    # Cameroon via the dashboard's own test-send tool.
+    # Infobip — the only SMS provider this app uses, confirmed working
+    # for MTN Cameroon via the dashboard's own test-send tool.
     # NEVER commit real values — .env file only.
     infobip_api_key: str = ""  # the part after "App " in your dashboard's Authorization header
     # Account-specific subdomain shown in your dashboard's code snippet,
@@ -70,9 +53,6 @@ class Settings(BaseSettings):
     # from your own dashboard test. Once you register a real sender ID
     # with Infobip for production, change this to that instead.
     infobip_sender_id: str = "ServiceSMS"
-
-    # Which provider actually sends the SMS: "twilio", "termii", or "infobip"
-    sms_provider: str = "infobip"
 
     # Upstash Redis — used for rate limiting on serverless platforms
     # (e.g. Vercel) where in-memory counters don't work, since each
