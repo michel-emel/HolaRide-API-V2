@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     infobip_sender_id: str = "ServiceSMS"
 
     # Which provider actually sends the SMS: "twilio", "termii", or "infobip"
-    sms_provider: str = "termii"
+    sms_provider: str = "infobip"
 
     # Upstash Redis — used for rate limiting on serverless platforms
     # (e.g. Vercel) where in-memory counters don't work, since each
