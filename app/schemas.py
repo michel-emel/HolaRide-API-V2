@@ -433,6 +433,8 @@ class NotificationOut(BaseModel):
     body: Optional[str] = None
     channel: Optional[str] = None
     status: str
+    reference_id: Optional[UUID] = None
+    read_at: Optional[datetime] = None
     created_at: datetime
 
 

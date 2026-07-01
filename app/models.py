@@ -186,6 +186,12 @@ class Notification(Base):
     body = Column(String)
     channel = Column(String)
     status = Column(String, nullable=False, server_default=text("'pending'"))
+    # Which trip or booking this notification is about — used by the
+    # Flutter app to navigate directly to the right screen when the
+    # user taps a notification. No FK constraint intentionally (see
+    # migration 0008 for why).
+    reference_id = Column(UUID(as_uuid=True), nullable=True)
+    read_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
 

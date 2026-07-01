@@ -1,3 +1,6 @@
+from typing import Optional
+from uuid import UUID
+
 from app import models
 from app.logging_config import get_logger
 from app.services.sms import send_sms
@@ -5,18 +8,37 @@ from app.services.sms import send_sms
 logger = get_logger("notifications")
 
 
-def notify_user(db, user_id, type_: str, title: str, body: str, channel: str = "push") -> None:
+def notify_user(
+    db,
+    user_id,
+    type_: str,
+    title: str,
+    body: str,
+    channel: str = "push",
+    reference_id: Optional[UUID] = None,
+) -> None:
     """
     Always logs the notification to the `notifications` table — that
     part never changes. If channel="sms", ALSO actually sends a real
     text via send_sms() (which itself still respects OTP_DEV_MODE —
     logs instead of sending for real during local dev/testing).
-
     "push" isn't wired to a real push provider yet (no Firebase/APNs
-    integration exists) — it just logs, same as before, until that's built.
+    integration exists) — it just logs, same as before, until that's
+    built.
+
+    reference_id is the trip_id or booking_id this notification is
+    about — stored so the Flutter app can navigate directly to the
+    right screen when the user taps the notification, without having
+    to guess from the type alone.
     """
     notif = models.Notification(
-        user_id=user_id, type=type_, title=title, body=body, channel=channel, status="sent"
+        user_id=user_id,
+        type=type_,
+        title=title,
+        body=body,
+        channel=channel,
+        status="sent",
+        reference_id=reference_id,
     )
     db.add(notif)
     db.commit()
