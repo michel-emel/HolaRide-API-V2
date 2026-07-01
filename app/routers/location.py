@@ -36,13 +36,15 @@ def update_location(
     user: models.User = Depends(get_current_user),
 ):
     """Pushes the caller's current GPS position for a trip, overwriting their last known one."""
-    _require_participant(db, trip_id, user)
+    trip, role = _require_participant(db, trip_id, user)
 
     loc = (
         db.query(models.LiveLocation)
         .filter(models.LiveLocation.trip_id == trip_id, models.LiveLocation.user_id == user.id)
         .first()
     )
+    is_first_share = loc is None  # True when sharing starts for the first time
+
     if loc:
         loc.latitude = payload.latitude
         loc.longitude = payload.longitude
@@ -53,6 +55,27 @@ def update_location(
         )
         db.add(loc)
     db.commit()
+
+    # Only notify once, the first time someone starts sharing their location —
+    # not on every subsequent GPS update (which would spam the participants).
+    if is_first_share and role == "driver":
+        # Driver started sharing → notify all paid passengers.
+        passengers = (
+            db.query(models.Booking)
+            .filter(
+                models.Booking.trip_id == trip_id,
+                models.Booking.status.in_(("paid", "completed")),
+            )
+            .all()
+        )
+        for booking in passengers:
+            notifications.notify_user(
+                db, booking.passenger_id, "driver_location_shared",
+                "Driver is sharing their location",
+                "Your driver has started sharing their live location. Open the trip to track them.",
+                reference_id=trip_id,
+            )
+
     return {"status": "updated"}
 
 

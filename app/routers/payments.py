@@ -27,10 +27,28 @@ def _confirm_payment_success(db: Session, payment: models.Payment) -> None:
         booking.status = "paid"
     db.commit()
 
+    # Notify the passenger their payment went through.
     notifications.notify_user(
-        db, booking.passenger_id, "payment_success", "Payment received",
-        f"Your payment of {float(payment.amount)} FCFA was confirmed.",
+        db, booking.passenger_id, "payment_success", "Payment confirmed",
+        f"Your payment of {float(payment.amount):.0f} FCFA was confirmed. You're all set for your trip!",
+        reference_id=booking.trip_id,
     )
+
+    # Notify the driver that this passenger has paid — they need to know
+    # so they can plan their seat count and confirm the passenger's spot.
+    trip = db.query(models.Trip).filter(models.Trip.id == booking.trip_id).first()
+    if trip:
+        passenger = db.query(models.User).filter(models.User.id == booking.passenger_id).first()
+        passenger_name = (
+            f"{passenger.first_name or ''} {passenger.last_name or ''}".strip()
+            or passenger.phone_number
+            if passenger else "A passenger"
+        )
+        notifications.notify_user(
+            db, trip.driver_id, "passenger_paid", "Passenger payment confirmed",
+            f"{passenger_name} has paid {float(payment.amount):.0f} FCFA for their seat on your trip.",
+            reference_id=booking.trip_id,
+        )
 
 
 def _mark_payment_failed(db: Session, payment: models.Payment) -> None:
