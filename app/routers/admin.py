@@ -137,6 +137,22 @@ def approve_vehicle(
     vehicle.verification_status = payload.verification_status
     if payload.vehicle_category_id:
         vehicle.vehicle_category_id = payload.vehicle_category_id
+
+    # Sync user role with vehicle status
+    driver = db.query(models.User).filter(models.User.id == vehicle.driver_id).first()
+    if driver:
+        if payload.verification_status == "approved":
+            driver.role = "driver"
+        elif payload.verification_status == "rejected":
+            # Check if driver still has other approved vehicles
+            other_approved = db.query(models.Vehicle).filter(
+                models.Vehicle.driver_id == driver.id,
+                models.Vehicle.id != vehicle.id,
+                models.Vehicle.verification_status == "approved",
+            ).count()
+            if other_approved == 0:
+                driver.role = "passenger"
+
     db.commit()
     db.refresh(vehicle)
     return _to_admin_vehicle_out(db, vehicle)
