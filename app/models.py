@@ -292,6 +292,8 @@ class OTPCode(Base):
     code_hash = Column(String, nullable=False)
     expires_at = Column(TIMESTAMP(timezone=True), nullable=False)
     attempts = Column(Integer, nullable=False, server_default=text("0"))
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
 
