@@ -1,8 +1,9 @@
-from datetime import date as date_type
+from datetime import date as date_type, datetime, time as time_type, timezone
 from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -23,11 +24,8 @@ def create_trip(
 ):
     """
     Driver-only (requires an admin-approved vehicle). Publishes a trip.
-    The driver only picks vehicle, departure/destination points, date,
-    time, and seats — price and vehicle category are both derived
-    automatically from route + the vehicle's assigned category, then
-    snapshotted onto the trip so later admin price changes don't
-    retroactively affect it.
+    A driver can only have ONE active (published) trip at a time — they
+    must complete or cancel it before posting a new one.
     """
     vehicle = (
         db.query(models.Vehicle)
@@ -41,24 +39,22 @@ def create_trip(
     if payload.available_seats > vehicle.total_seats:
         raise HTTPException(status_code=400, detail="Available seats can't exceed the vehicle's total seats")
 
-    # Max 2 active trips per driver at once. "Active" means not yet
-    # completed or cancelled — a driver juggling more than 2 live
-    # trips at a time is exactly the scenario this caps.
+    # A driver can only have 1 active (published) trip at a time.
+    # Once it's completed or cancelled, they can post a new one.
     active_count = (
         db.query(models.Trip)
         .filter(
             models.Trip.driver_id == driver.id,
-            models.Trip.status.notin_(("completed", "cancelled")),
+            models.Trip.status == "published",
         )
         .count()
     )
-    if active_count >= 2:
+    if active_count >= 1:
         raise HTTPException(
             status_code=400,
-            detail="You already have 2 active trips — complete or cancel one before publishing another.",
+            detail="You already have an active trip — complete or cancel it before posting a new one.",
         )
 
-    # Driver never sets a category or a price — both are derived here.
     route, price = get_trip_price(db, payload.departure_location_id, payload.destination_location_id, vehicle)
 
     trip = models.Trip(
@@ -70,7 +66,7 @@ def create_trip(
         departure_date=payload.departure_date,
         departure_time=payload.departure_time,
         available_seats=payload.available_seats,
-        price_per_seat=price,   # snapshotted now — a later admin price change won't affect this trip
+        price_per_seat=price,
         status="published",
     )
     db.add(trip)
@@ -84,28 +80,46 @@ def search_trips(
     origin_city: Optional[str] = None,
     destination_city: Optional[str] = None,
     departure_date: Optional[date_type] = None,
+    departure_city: Optional[str] = None,
+    destination_city_param: Optional[str] = None,
     limit: int = 20,
     db: Session = Depends(get_db),
 ):
     """
-    With both origin_city and destination_city: filters to that exact route
-    (the original behavior). With NEITHER: just browses the soonest
-    available published trips, for a "discovery feed" type screen (e.g.
-    a home screen showing a few trips before the user has searched anything).
+    Returns published trips that haven't departed yet.
+    For today's date, only trips whose departure time is still in the
+    future are included — past trips are never shown.
+    Accepts both origin_city/destination_city and departure_city/destination_city
+    parameter names for compatibility.
     """
-    if bool(origin_city) != bool(destination_city):
-        raise HTTPException(status_code=400, detail="Provide both origin_city and destination_city, or neither")
+    # Normalise parameter names (web sends departure_city, app sends origin_city)
+    dep_city  = departure_city or origin_city
+    dest_city = destination_city_param or destination_city
+
+    if bool(dep_city) != bool(dest_city):
+        raise HTTPException(status_code=400, detail="Provide both departure and destination city, or neither")
+
+    # Only show trips that haven't departed yet.
+    today    = date_type.today()
+    now_time = datetime.now(timezone.utc).time().replace(tzinfo=None)
 
     query = db.query(models.Trip).filter(
         models.Trip.status == "published",
         models.Trip.available_seats > 0,
+        or_(
+            models.Trip.departure_date > today,
+            and_(
+                models.Trip.departure_date == today,
+                models.Trip.departure_time >= now_time,
+            ),
+        ),
     )
 
-    if origin_city and destination_city:
-        origin = db.query(models.City).filter(models.City.name == origin_city).first()
-        destination = db.query(models.City).filter(models.City.name == destination_city).first()
+    if dep_city and dest_city:
+        origin = db.query(models.City).filter(models.City.name == dep_city).first()
+        destination = db.query(models.City).filter(models.City.name == dest_city).first()
         if not origin or not destination:
-            raise HTTPException(status_code=404, detail="City not found")
+            return []
 
         route = (
             db.query(models.Route)
@@ -134,14 +148,6 @@ def preview_trip_price(
     db: Session = Depends(get_db),
     driver: models.User = Depends(require_driver()),
 ):
-    """
-    Lets a driver see the price-per-seat for a route before actually
-    publishing a trip, using the exact same pricing lookup create_trip
-    uses (get_trip_price) — so this number can never drift out of sync
-    with what the trip would actually be charged at. Same vehicle
-    ownership/approval checks as create_trip, since price depends on
-    the vehicle's assigned category. Nothing is created here.
-    """
     vehicle = (
         db.query(models.Vehicle)
         .filter(models.Vehicle.id == vehicle_id, models.Vehicle.driver_id == driver.id)
@@ -158,7 +164,6 @@ def preview_trip_price(
 
 @router.get("/{trip_id}", response_model=schemas.TripOut)
 def get_trip(trip_id: UUID, db: Session = Depends(get_db)):
-    """Public. Returns full details for a single trip."""
     trip = db.query(models.Trip).filter(models.Trip.id == trip_id).first()
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
@@ -171,12 +176,6 @@ def cancel_trip(
     db: Session = Depends(get_db),
     driver: models.User = Depends(require_driver()),
 ):
-    """
-    Driver-only. Cancels an entire trip. Every passenger with a paid
-    booking gets notified and a Cancellation record (so they can later
-    call /bookings/{id}/rebook onto an alternative); anyone who doesn't
-    rebook is refunded in full. Also dings the driver's reliability score.
-    """
     trip = db.query(models.Trip).filter(models.Trip.id == trip_id, models.Trip.driver_id == driver.id).first()
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
@@ -214,13 +213,6 @@ def complete_trip(
     db: Session = Depends(get_db),
     driver: models.User = Depends(require_driver()),
 ):
-    """
-    Driver marks the trip as completed once it's actually finished.
-    This is what triggers the driver's instant payout — for every
-    booking that's paid or no_show on this trip, the driver gets
-    paid the full price_total, regardless of whether a partial-payment
-    passenger ever settled their remaining 20%.
-    """
     trip = db.query(models.Trip).filter(models.Trip.id == trip_id, models.Trip.driver_id == driver.id).first()
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
@@ -251,10 +243,6 @@ def complete_trip(
         try:
             result = payments_provider.disburse(driver.phone_number, payout_total)
             payout.provider_payout_id = result["provider_payout_id"]
-            # Stays "pending" — PawaPay confirms the FINAL result later via
-            # webhook (POST /payments/webhook/pawapay) or by polling
-            # check_payout_status(). "ACCEPTED" from disburse() just means
-            # the request was received, not that the driver has the money yet.
             if result["status"] == "rejected":
                 payout.status = "failed"
             db.commit()
