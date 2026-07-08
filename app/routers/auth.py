@@ -23,11 +23,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 @router.post("/otp/request")
 def request_otp(payload: schemas.OTPRequest, request: Request, db: Session = Depends(get_db)):
     """
-    Sends a 6-digit code to a phone number. Works the same whether the
-    number is new (will become a signup once verified) or existing
-    (a login). In dev mode, the code is also returned in the response
-    body (dev_otp_code) for easy scripting — never happens in production.
-    Rate-limited per IP via Upstash Redis — see app/rate_limit.py.
+    Sends a 6-digit OTP to the phone number.
+    Accepts first_name (required) and last_name (optional) — stored
+    temporarily in otp_codes so that verify_otp can create the account
+    with the correct name without needing a separate PATCH /me call.
+    No user is created here — only when the OTP is successfully verified.
     """
     enforce_rate_limit(otp_request_limiter, request)
 
@@ -36,6 +36,8 @@ def request_otp(payload: schemas.OTPRequest, request: Request, db: Session = Dep
         phone_number=payload.phone_number,
         code_hash=hash_otp(code),
         expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.otp_expire_minutes),
+        first_name=payload.first_name,
+        last_name=payload.last_name,
     )
     db.add(otp_row)
     db.commit()
@@ -44,9 +46,6 @@ def request_otp(payload: schemas.OTPRequest, request: Request, db: Session = Dep
 
     response = {"message": "OTP sent"}
     if settings.otp_dev_mode:
-        # Only ever present in dev mode (forcibly disabled in production —
-        # see app/config.py). Lets test scripts read the code directly
-        # instead of needing to watch the server's terminal output.
         response["dev_otp_code"] = code
     return response
 
@@ -54,13 +53,11 @@ def request_otp(payload: schemas.OTPRequest, request: Request, db: Session = Dep
 @router.post("/otp/verify", response_model=schemas.TokenPair)
 def verify_otp(payload: schemas.OTPVerify, request: Request, db: Session = Depends(get_db)):
     """
-    Verifies the code from /otp/request and returns access + refresh
-    tokens. If this phone number has never been seen before, this is
-    what actually creates the account — first_name/last_name are only
-    used on that first call and ignored on every login after. The
-    attempts-counter on the OTP row already blocks brute-forcing one
-    phone's code; the IP-based rate limit below caps the request rate
-    itself as a second layer.
+    Verifies the OTP code.
+    - For NEW users: creates the account using the name stored in
+      otp_codes at request time. No user exists in the DB until this
+      point — abandoning before verification leaves no trace.
+    - For EXISTING users: just returns a new token pair, name is ignored.
     """
     enforce_rate_limit(otp_verify_limiter, request)
 
@@ -83,15 +80,15 @@ def verify_otp(payload: schemas.OTPVerify, request: Request, db: Session = Depen
 
     user = db.query(models.User).filter(models.User.phone_number == payload.phone_number).first()
     if not user:
-        # Everyone signs up the same way now. "role" only still matters
-        # to distinguish admin from everyone else — admin accounts are
-        # promoted manually (see README), never self-selected here.
+        # Name comes from otp_codes (collected at request time), not from
+        # the verify payload — this guarantees name is always set on
+        # account creation without a separate PATCH /me step.
         user = models.User(
             phone_number=payload.phone_number,
             role="passenger",
             phone_verified=True,
-            first_name=payload.first_name,
-            last_name=payload.last_name,
+            first_name=otp_row.first_name,
+            last_name=otp_row.last_name,
         )
         db.add(user)
         db.commit()
