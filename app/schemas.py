@@ -43,21 +43,13 @@ def _validate_cameroon_phone(value: str) -> str:
 
 class OTPRequest(BaseModel):
     phone_number: str
-    first_name: str
+    first_name: Optional[str] = None
     last_name: Optional[str] = None
 
     @field_validator("phone_number")
     @classmethod
     def validate_phone(cls, v: str) -> str:
         return _validate_cameroon_phone(v)
-
-    @field_validator("first_name")
-    @classmethod
-    def validate_first_name(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("First name is required")
-        return v
 
 
 class OTPVerify(BaseModel):
