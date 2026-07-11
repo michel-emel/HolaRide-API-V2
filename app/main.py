@@ -41,7 +41,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         err = dict(err)
         # 'ctx' can contain the raw Python exception object from a custom
         # validator (e.g. our phone number check) — not JSON-serializable,
-        # and the human-readable message is already in 'msg' anyway.
+        # and the human-readable message is already in 'msg'.
         err.pop("ctx", None)
         cleaned_errors.append(err)
     return JSONResponse(
