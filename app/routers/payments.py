@@ -227,6 +227,20 @@ def dev_force_paid(
     booking.outstanding_balance = 0
     db.commit()
 
+    # Notify driver
+    trip = db.query(models.Trip).filter(models.Trip.id == booking.trip_id).first()
+    if trip:
+        passenger = db.query(models.User).filter(models.User.id == booking.passenger_id).first()
+        passenger_name = (
+            f"{passenger.first_name or ''} {passenger.last_name or ''}".strip()
+            or passenger.phone_number
+        ) if passenger else "A passenger"
+        from app.services import notifications
+        notifications.notify_user(
+            db, trip.driver_id, "passenger_paid", "Passenger payment confirmed",
+            f"{passenger_name} has paid {float(booking.price_total):.0f} FCFA for their seat on your trip.",
+        )
+
     logger.warning(f"[DEV] booking {booking_id} force-marked paid via dev-force-paid endpoint")
     return {"booking_id": booking.id, "status": booking.status}
 
