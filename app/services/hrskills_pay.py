@@ -20,7 +20,7 @@ from app.config import settings
 logger = logging.getLogger("holaride.payments")
 
 BASE_URL    = "https://api.hrskills-pay.com"
-SANDBOX_URL = "https://api.hrskills-pay.com/sandbox"
+SANDBOX_URL = "https://api.hrskills-pay.com/sandbox/api"
 
 _cached_token: dict | None = None
 
