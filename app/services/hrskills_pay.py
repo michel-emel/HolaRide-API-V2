@@ -1,137 +1,110 @@
-import sys
-path = sys.argv[1]
-with open(path) as f:
-    content = f.read()
+"""
+HR-Skills Pay — Service wrapper.
+Keys from env: HRSKILLS_KEY_A, HRSKILLS_KEY_B
+Sandbox: even amount = SUCCESS, odd = FAILED
+"""
+import hmac
+import hashlib
+import logging
+import time
+import uuid
 
-# 1. Replace import
-content = content.replace(
-    "from app.services import notifications, payments_provider",
-    "from app.services import notifications, hrskills_pay"
-)
+import httpx
 
-# 2. Replace initiate-payment charge call
-old_charge = """    try:
-        result = payments_provider.charge(passenger.phone_number, amount_due)
-    except Exception as exc:
-        logger.error(f"PawaPay charge failed for booking {booking_id}: {exc}")
-        raise HTTPException(status_code=502, detail="Could not reach the Mobile Money provider. Try again shortly.")
-    payment = models.Payment(
-        booking_id=booking.id,
-        provider="pawapay",
-        provider_transaction_id=result["provider_transaction_id"],
-        amount=amount_due,
-        purpose=purpose,
-        status="pending" if result["status"] == "pending" else "failed",
+from app.config import settings
+
+logger = logging.getLogger("holaride.payments")
+
+BASE_URL = "https://api.hrskills-pay.com"
+_cached_token: dict | None = None
+
+
+def _get_transaction_token() -> str:
+    global _cached_token
+    now = time.time()
+    if _cached_token and _cached_token["expires_at"] - now > 300:
+        return _cached_token["token"]
+    resp = httpx.post(
+        f"{BASE_URL}/v1/auth/transaction-token",
+        headers={"Authorization": f"Bearer {settings.hrskills_key_a}", "Content-Type": "application/json"},
+        json={"api_secret": settings.hrskills_key_b},
+        timeout=15,
     )
-    db.add(payment)
-    db.commit()
-    return {
-        "booking_id": booking.id,
-        "payment_status": payment.status,
-        "message": (
-            "Check your phone and approve the Mobile Money prompt. "
-            "Poll GET /bookings/{booking_id}/payment-status to see when it's confirmed."
-            if payment.status == "pending"
-            else "Payment request was rejected immediately."
-        ),
-    }"""
+    resp.raise_for_status()
+    data = resp.json()
+    _cached_token = {"token": data["transaction_token"], "expires_at": now + data["expires_in"]}
+    return _cached_token["token"]
 
-new_charge = """    try:
-        result = hrskills_pay.initiate_cashin(
-            phone=passenger.phone_number,
-            amount=amount_due,
-            booking_id=str(booking.id),
-            description=f"HolaRide booking #{str(booking.id)[:8]}",
-        )
-    except Exception as exc:
-        logger.error(f"HR-Skills Pay charge failed for booking {booking_id}: {exc}")
-        raise HTTPException(status_code=502, detail="Could not reach the Mobile Money provider. Try again shortly.")
-    payment = models.Payment(
-        booking_id=booking.id,
-        provider="hrskills_pay",
-        provider_transaction_id=result["reference"],
-        amount=amount_due,
-        purpose=purpose,
-        status="pending" if result["status"] in ("PENDING", "pending") else "failed",
+
+def _headers() -> dict:
+    return {
+        "Authorization": f"Bearer {settings.hrskills_key_a}",
+        "X-Transaction-Token": _get_transaction_token(),
+        "Content-Type": "application/json",
+        "Idempotency-Key": str(uuid.uuid4()),
+    }
+
+
+def _detect_operator(phone: str) -> str:
+    local = phone.lstrip("+")
+    if local.startswith("237"):
+        local = local[3:]
+    prefix = local[:3]
+    mtn = {"650","651","652","653","654","670","671","672","673","674","675",
+           "676","677","678","679","680","681","682","683","684","685","686","687","688","689"}
+    orange = {"655","656","657","658","659","690","691","692","693","694","695","696","697","698","699"}
+    if prefix in mtn: return "mtn"
+    if prefix in orange: return "orange"
+    return "mtn"
+
+
+def _sandbox_amount(amount: float) -> int:
+    n = int(amount)
+    return n if n % 2 == 0 else n + 1
+
+
+def initiate_cashin(phone: str, amount: float, booking_id: str, description: str = "HolaRide booking") -> dict:
+    amount_int = _sandbox_amount(amount) if settings.hrskills_sandbox else int(amount)
+    phone_clean = phone.lstrip("+")
+    operator = _detect_operator(phone_clean)
+    payload = {
+        "operator": operator, "country": "CM",
+        "phone_number": phone_clean, "amount": amount_int,
+        "currency": "XAF", "description": description,
+        "metadata": {"booking_id": booking_id},
+    }
+    logger.info(f"[CashIn] booking={booking_id} amount={amount_int} op={operator}")
+    resp = httpx.post(f"{BASE_URL}/api/v1/payin/mobile-money", headers=_headers(), json=payload, timeout=20)
+    resp.raise_for_status()
+    data = resp.json()
+    return data["data"]
+
+
+def initiate_cashout(phone: str, amount: float, trip_id: str) -> dict:
+    amount_int = _sandbox_amount(amount) if settings.hrskills_sandbox else int(amount)
+    phone_clean = phone.lstrip("+")
+    operator = _detect_operator(phone_clean)
+    payload = {
+        "operator": operator, "country": "CM",
+        "phone_number": phone_clean, "amount": amount_int, "currency": "XAF",
+    }
+    resp = httpx.post(f"{BASE_URL}/api/v1/payout/mobile-money", headers=_headers(), json=payload, timeout=20)
+    resp.raise_for_status()
+    return resp.json()["data"]
+
+
+def get_payment_status(reference: str) -> str:
+    resp = httpx.get(
+        f"{BASE_URL}/v1/payments/{reference}",
+        headers={"Authorization": f"Bearer {settings.hrskills_key_a}", "X-Transaction-Token": _get_transaction_token()},
+        timeout=15,
     )
-    db.add(payment)
-    db.commit()
-    return {
-        "booking_id": booking.id,
-        "reference": result["reference"],
-        "payment_status": payment.status,
-        "message": (
-            "Check your phone and approve the Mobile Money prompt."
-            if payment.status == "pending"
-            else "Payment request was rejected immediately."
-        ),
-    }"""
+    resp.raise_for_status()
+    return resp.json()["data"]["status"]
 
-content = content.replace(old_charge, new_charge)
 
-# 3. Replace pay-balance charge call
-old_balance = """    try:
-        result = payments_provider.charge(passenger.phone_number, amount_due)
-    except Exception as exc:
-        logger.error(f"PawaPay charge failed for booking {booking_id} balance: {exc}")
-        raise HTTPException(status_code=502, detail="Could not reach the Mobile Money provider. Try again shortly.")
-
-    payment = models.Payment(
-        booking_id=booking.id,
-        provider="pawapay",
-        provider_transaction_id=result["provider_transaction_id"],
-        amount=amount_due,
-        purpose="balance_settlement",
-        status="pending" if result["status"] == "pending" else "failed",
-    )"""
-
-new_balance = """    try:
-        result = hrskills_pay.initiate_cashin(
-            phone=passenger.phone_number,
-            amount=amount_due,
-            booking_id=str(booking.id),
-            description=f"HolaRide balance #{str(booking.id)[:8]}",
-        )
-    except Exception as exc:
-        logger.error(f"HR-Skills Pay charge failed for booking {booking_id} balance: {exc}")
-        raise HTTPException(status_code=502, detail="Could not reach the Mobile Money provider. Try again shortly.")
-
-    payment = models.Payment(
-        booking_id=booking.id,
-        provider="hrskills_pay",
-        provider_transaction_id=result["reference"],
-        amount=amount_due,
-        purpose="balance_settlement",
-        status="pending" if result["status"] in ("PENDING", "pending") else "failed",
-    )"""
-
-content = content.replace(old_balance, new_balance)
-
-# 4. Replace payment status check
-old_status = "    provider_status = payments_provider.check_deposit_status(payment.provider_transaction_id)"
-new_status = """    try:
-        provider_status = hrskills_pay.get_payment_status(payment.provider_transaction_id)
-    except Exception as exc:
-        logger.error(f"HR-Skills Pay status check failed: {exc}")
-        return {"payment_status": "pending"}"""
-
-content = content.replace(old_status, new_status)
-
-# 5. Fix status comparison (hrskills uses SUCCESS/FAILED not COMPLETED/FAILED)
-content = content.replace(
-    'if provider_status == "COMPLETED":',
-    'if provider_status == "SUCCESS":'
-)
-
-with open(path, "w") as f:
-    f.write(content)
-
-checks = [
-    ("hrskills_pay.initiate_cashin", "initiate_cashin call"),
-    ("hrskills_pay.get_payment_status", "status check"),
-    ('provider="hrskills_pay"', "provider name"),
-    ('result["reference"]', "reference key"),
-    ('"SUCCESS"', "status comparison"),
-]
-for k, label in checks:
-    print(f"{'✓' if k in content else '✗'} {label}")
+def verify_webhook_signature(payload: bytes, signature: str) -> bool:
+    expected = hmac.new(
+        settings.hrskills_webhook_secret.encode(), payload, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(f"sha256={expected}", signature)
