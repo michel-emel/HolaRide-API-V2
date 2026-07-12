@@ -8,7 +8,7 @@ from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user
 from app.logging_config import get_logger
-from app.services import notifications, payments_provider
+from app.services import notifications, hrskills_pay
 
 router = APIRouter(tags=["payments"])
 logger = get_logger("payments")
@@ -89,18 +89,23 @@ def initiate_payment(
     purpose = "initial_80" if booking.payment_type == "partial_80" else "full"
 
     try:
-        result = payments_provider.charge(passenger.phone_number, amount_due)
+        result = hrskills_pay.initiate_cashin(
+            phone=passenger.phone_number,
+            amount=amount_due,
+            booking_id=str(booking.id),
+            description=f"HolaRide booking #{str(booking.id)[:8]}",
+        )
     except Exception as exc:
-        logger.error(f"PawaPay charge failed for booking {booking_id}: {exc}")
+        logger.error(f"HR-Skills Pay charge failed for booking {booking_id}: {exc}")
         raise HTTPException(status_code=502, detail="Could not reach the Mobile Money provider. Try again shortly.")
 
     payment = models.Payment(
         booking_id=booking.id,
-        provider="pawapay",
-        provider_transaction_id=result["provider_transaction_id"],
+        provider="hrskills_pay",
+        provider_transaction_id=result["reference"],
         amount=amount_due,
         purpose=purpose,
-        status="pending" if result["status"] == "pending" else "failed",
+        status="pending" if result["status"] in ("PENDING", "pending") else "failed",
     )
     db.add(payment)
     db.commit()
@@ -140,18 +145,23 @@ def pay_balance(
 
     amount_due = float(booking.outstanding_balance)
     try:
-        result = payments_provider.charge(passenger.phone_number, amount_due)
+        result = hrskills_pay.initiate_cashin(
+            phone=passenger.phone_number,
+            amount=amount_due,
+            booking_id=str(booking.id),
+            description=f"HolaRide booking #{str(booking.id)[:8]}",
+        )
     except Exception as exc:
-        logger.error(f"PawaPay charge failed for booking {booking_id} balance: {exc}")
+        logger.error(f"HR-Skills Pay charge failed for booking {booking_id} balance: {exc}")
         raise HTTPException(status_code=502, detail="Could not reach the Mobile Money provider. Try again shortly.")
 
     payment = models.Payment(
         booking_id=booking.id,
-        provider="pawapay",
-        provider_transaction_id=result["provider_transaction_id"],
+        provider="hrskills_pay",
+        provider_transaction_id=result["reference"],
         amount=amount_due,
         purpose="balance_settlement",
-        status="pending" if result["status"] == "pending" else "failed",
+        status="pending" if result["status"] in ("PENDING", "pending") else "failed",
     )
     db.add(payment)
     db.commit()
@@ -181,8 +191,12 @@ def get_payment_status(
         booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
         return {"payment_status": "none_pending", "booking_status": booking.status if booking else None}
 
-    provider_status = payments_provider.check_deposit_status(payment.provider_transaction_id)
-    if provider_status == "COMPLETED":
+    try:
+        provider_status = hrskills_pay.get_payment_status(payment.provider_transaction_id)
+    except Exception as exc:
+        logger.error(f"HR-Skills Pay status check failed: {exc}")
+        return {"payment_status": "pending"}
+    if provider_status == "SUCCESS":
         _confirm_payment_success(db, payment)
     elif provider_status == "FAILED":
         _mark_payment_failed(db, payment)
