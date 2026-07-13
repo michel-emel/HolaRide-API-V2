@@ -20,6 +20,15 @@ from app.services.sms import send_otp_sms
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+
+@router.post("/check-phone")
+def check_phone(payload: schemas.OTPRequest, db: Session = Depends(get_db)):
+    """Check if a phone number already has an account."""
+    user = db.query(models.User).filter(
+        models.User.phone_number == payload.phone_number
+    ).first()
+    return {"exists": user is not None}
+
 @router.post("/otp/request")
 def request_otp(payload: schemas.OTPRequest, request: Request, db: Session = Depends(get_db)):
     """
