@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     hrskills_key_a: str = ""           # hrsk_pk_test_... or hrsk_pk_live_...
     hrskills_key_b: str = ""           # hrsk_sk_test_... or hrsk_sk_live_...
     hrskills_webhook_secret: str = ""  # from dashboard → Webhooks
-    hrskills_sandbox: bool = True      # True = sandbox, False = live
+    hrskills_sandbox: bool = False      # True = sandbox, False = live
 
     # Comma-separated list of allowed origins for browser-based clients.
     cors_allowed_origins: str = "http://localhost:3000"
