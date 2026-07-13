@@ -192,17 +192,37 @@ def get_payment_status(
         return {"payment_status": "none_pending", "booking_status": booking.status if booking else None}
 
     try:
-        provider_status = hrskills_pay.get_payment_status(payment.provider_transaction_id)
+        provider_data = hrskills_pay.get_payment_status(payment.provider_transaction_id)
     except Exception as exc:
         logger.error(f"HR-Skills Pay status check failed: {exc}")
         return {"payment_status": "pending"}
+
+    provider_status = provider_data.get("status", "PENDING")
+
     if provider_status == "SUCCESS":
         _confirm_payment_success(db, payment)
     elif provider_status == "FAILED":
         _mark_payment_failed(db, payment)
 
     db.refresh(payment)
-    return {"payment_status": payment.status}
+
+    # Return failure details so the app can show the right message
+    failure_reason = None
+    if payment.status == "failed":
+        error_code = provider_data.get("error_code", "")
+        category   = provider_data.get("failure_reason_category", "")
+        if error_code == "703108" or category == "operator_balance":
+            failure_reason = "insufficient_balance"
+        elif category == "user_cancelled":
+            failure_reason = "user_cancelled"
+        else:
+            failure_reason = "payment_failed"
+
+    return {
+        "payment_status": payment.status,
+        "failure_reason": failure_reason,
+        "error_message": provider_data.get("error_message") if payment.status == "failed" else None,
+    }
 
 
 @router.post("/bookings/{booking_id}/dev-force-paid")
