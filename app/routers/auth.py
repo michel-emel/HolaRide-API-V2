@@ -50,7 +50,7 @@ def request_otp(payload: schemas.OTPRequest, request: Request, db: Session = Dep
     return response
 
 
-@router.post("/otp/verify", response_model=schemas.TokenPair)
+@router.post("/otp/verify")
 def verify_otp(payload: schemas.OTPVerify, request: Request, db: Session = Depends(get_db)):
     """
     Verifies the OTP code.
@@ -79,10 +79,8 @@ def verify_otp(payload: schemas.OTPVerify, request: Request, db: Session = Depen
         raise HTTPException(status_code=400, detail="Incorrect code")
 
     user = db.query(models.User).filter(models.User.phone_number == payload.phone_number).first()
+    is_new_user = user is None
     if not user:
-        # Name comes from otp_codes (collected at request time), not from
-        # the verify payload — this guarantees name is always set on
-        # account creation without a separate PATCH /me step.
         user = models.User(
             phone_number=payload.phone_number,
             role="passenger",
@@ -100,10 +98,12 @@ def verify_otp(payload: schemas.OTPVerify, request: Request, db: Session = Depen
     db.delete(otp_row)
     db.commit()
 
-    return schemas.TokenPair(
-        access_token=create_access_token(str(user.id), user.role),
-        refresh_token=create_refresh_token(str(user.id), user.role),
-    )
+    return {
+        "access_token":  create_access_token(str(user.id), user.role),
+        "refresh_token": create_refresh_token(str(user.id), user.role),
+        "token_type":    "bearer",
+        "is_new_user":   is_new_user,
+    }
 
 
 @router.post("/refresh", response_model=schemas.TokenPair)
