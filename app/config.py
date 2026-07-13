@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     hrskills_key_a: str = ""           # hrsk_pk_test_... or hrsk_pk_live_...
     hrskills_key_b: str = ""           # hrsk_sk_test_... or hrsk_sk_live_...
     hrskills_webhook_secret: str = ""  # from dashboard → Webhooks
-    hrskills_sandbox: bool = False      # True = sandbox, False = live
+    hrskills_sandbox: bool = False     # True = sandbox, False = live
 
     # Comma-separated list of allowed origins for browser-based clients.
     cors_allowed_origins: str = "http://localhost:3000"
@@ -50,13 +50,20 @@ class Settings(BaseSettings):
     def _enforce_production_safety(self) -> "Settings":
         """
         In production: OTP dev mode and payment dev mode are always off,
-        regardless of what's in .env.
+        regardless of what's in .env. Also: if live HR-Skills keys are
+        present, sandbox mode can never silently stay on — prevents
+        live keys being sent through the sandbox auth path (X-API-Secret
+        instead of X-Transaction-Token), which HR-Skills rejects.
         """
         if self.environment == "production":
             if self.otp_dev_mode:
                 self.otp_dev_mode = False
             if self.payment_dev_mode:
                 self.payment_dev_mode = False
+
+        if self.hrskills_sandbox and self.hrskills_key_a.startswith("hrsk_pk_live_"):
+            self.hrskills_sandbox = False
+
         return self
 
 
