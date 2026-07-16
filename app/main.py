@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from app.routers import live_location
 
 from app.config import settings
 from app.database import engine
@@ -85,7 +86,7 @@ app.include_router(chat.router)
 app.include_router(location.router)
 app.include_router(reviews.router)
 app.include_router(locations.router)
-
+app.include_router(live_location.router)
 
 @app.get("/health")
 def health():

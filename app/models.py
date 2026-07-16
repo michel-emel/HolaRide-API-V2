@@ -219,6 +219,7 @@ class LiveLocation(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     latitude = Column(Numeric, nullable=False)
     longitude = Column(Numeric, nullable=False)
+    heading = Column(Numeric, nullable=True)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
 

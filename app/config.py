@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_role_key: str = ""
     supabase_vehicle_photos_bucket: str = "vehicle-photos"
+    supabase_jwt_secret: str = ""      # Dashboard → Settings → API → JWT Secret
 
     @model_validator(mode="after")
     def _enforce_production_safety(self) -> "Settings":
