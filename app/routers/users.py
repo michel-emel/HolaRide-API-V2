@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -96,3 +96,35 @@ def unread_notification_count(
         .count()
     )
     return {"count": count}
+
+@router.delete("/me/notifications/{notification_id}")
+def delete_notification(
+    notification_id: UUID,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Deletes a single notification. Only works on the caller's own
+    notifications."""
+    notif = (
+        db.query(models.Notification)
+        .filter(models.Notification.id == notification_id, models.Notification.user_id == user.id)
+        .first()
+    )
+    if not notif:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    db.delete(notif)
+    db.commit()
+    return {"status": "deleted"}
+
+
+@router.delete("/me/notifications")
+def delete_all_notifications(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Deletes ALL of the caller's notifications at once."""
+    db.query(models.Notification).filter(models.Notification.user_id == user.id).delete(
+        synchronize_session=False
+    )
+    db.commit()
+    return {"status": "ok"}
