@@ -330,16 +330,15 @@ def _to_admin_trip_out(db: Session, trip: models.Trip) -> schemas.AdminTripOut:
         booking_count=booking_count,
     )
 
-
 def _cascade_delete_trip(db: Session, trip: models.Trip):
     """
     Permanently deletes a trip and everything that references it —
     bookings, payments, cancellations, live locations, SOS alerts,
-    reviews, its chat and every message in it, and any payouts already
-    issued for it. This is IRREVERSIBLE and erases payment/payout
-    history along with the trip — there's no soft-delete, no undo, and
-    no refund issued automatically; if passengers already paid, that
-    payment record is simply gone.
+    reviews, its chat and every message in it, hidden-chat records,
+    and any payouts already issued for it. This is IRREVERSIBLE and
+    erases payment/payout history along with the trip — there's no
+    soft-delete, no undo, and no refund issued automatically; if
+    passengers already paid, that payment record is simply gone.
 
     Reports that mention this trip have their trip_id cleared instead
     of being deleted outright — a report is a moderation record about
@@ -390,6 +389,7 @@ def _cascade_delete_trip(db: Session, trip: models.Trip):
     db.query(models.SOSAlert).filter(models.SOSAlert.trip_id == trip.id).delete(synchronize_session=False)
     db.query(models.Review).filter(models.Review.trip_id == trip.id).delete(synchronize_session=False)
     db.query(models.Payout).filter(models.Payout.trip_id == trip.id).delete(synchronize_session=False)
+    db.query(models.HiddenChat).filter(models.HiddenChat.trip_id == trip.id).delete(synchronize_session=False)
     db.query(models.Report).filter(models.Report.trip_id == trip.id).update(
         {models.Report.trip_id: None}, synchronize_session=False
     )
@@ -398,7 +398,6 @@ def _cascade_delete_trip(db: Session, trip: models.Trip):
     )
 
     db.query(models.Trip).filter(models.Trip.id == trip.id).delete(synchronize_session=False)
-
 
 @router.get("/trips", response_model=List[schemas.AdminTripOut])
 def list_all_trips(db: Session = Depends(get_db), _=Depends(require_role("admin"))):
