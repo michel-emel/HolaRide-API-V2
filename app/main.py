@@ -26,7 +26,7 @@ app.add_middleware(
     # locally. Safe in production too: this only ever matches
     # "localhost" itself, which a real attacker's browser can't fake
     # as their own origin — it doesn't open access to any other domain.
-    allow_origin_regex=r"http://localhost:\d+",
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
