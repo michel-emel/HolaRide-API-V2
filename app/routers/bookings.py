@@ -456,7 +456,11 @@ def my_bookings(db: Session = Depends(get_db), user: models.User = Depends(get_c
                 destination_location=trip_out.destination_location,
                 departure_date=trip_out.departure_date,
                 departure_time=trip_out.departure_time,
+                # ✅ NOUVEAU : statut réel du trip, distinct du statut du
+                # booking ci-dessus. C'est ce champ que le client doit
+                # utiliser pour savoir si le partage live est encore
+                # possible (uniquement si trip_status == "ongoing").
+                trip_status=trip_out.status,
             )
         )
     return results
-

@@ -423,6 +423,14 @@ class MyBookingOut(BaseModel):
     destination_location: str
     departure_date: date
     departure_time: time
+    # ✅ NOUVEAU : le statut du TRIP lui-même (published/ongoing/completed/
+    # cancelled/full), distinct de `status` ci-dessus qui est celui du
+    # BOOKING (paid/completed/cancelled/...). Les deux peuvent diverger
+    # légitimement (ex: trip completed mais booking encore paid si un
+    # solde reste dû) — le client a besoin des deux séparément pour
+    # savoir, entre autres, si le partage de position live est encore
+    # possible (ça ne dépend QUE du statut du trip, jamais du booking).
+    trip_status: str
 
 
 # ---- Notifications ----
